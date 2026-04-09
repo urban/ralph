@@ -1,0 +1,5 @@
+# Misc
+.agents/
+.DS_Store
+/.tmp
+/tmp
