@@ -131,11 +131,20 @@ If you want one Ralph install that you can reuse across projects, add the Ralph 
 
 Do not symlink only the entrypoint scripts into another directory unless you also keep `common.sh` next to them. Both scripts load `common.sh` relative to their own location.
 
-For zsh on macOS:
+For zsh on macOS, add Ralph to the startup file your shell actually uses. Many setups use `~/.zshrc`. If you keep your zsh config in `~/.config/zsh/.zprofile`, use that instead.
+
+Using `~/.zshrc`:
 
 ```bash
 echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.zshrc
 source ~/.zshrc
+```
+
+Using `~/.config/zsh/.zprofile`:
+
+```bash
+echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.config/zsh/.zprofile
+source ~/.config/zsh/.zprofile
 ```
 
 For bash:
