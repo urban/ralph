@@ -74,7 +74,7 @@ codex
 Clone it:
 
 ```bash
-git clone https://github.com/<your-user>/ralph.git
+git clone https://github.com/urban/ralph.git
 cd ralph
 chmod +x ralph-loop ralph-once
 ```
@@ -188,7 +188,6 @@ If Ralph lives inside `scripts/ralph` instead of your `PATH`, use `./scripts/ral
 - `common.sh` contains the shared shell helpers used by both entrypoints.
 - `CHECKLIST.md` is the default task list Ralph gives to Codex.
 - `INSTRUCTIONS.md` defines the rules for each Codex pass.
-- `STEERING.md` is reserved for must-do-first work. Right now it is empty.
 - `PROGRESS.md` is the handoff log between passes.
 - Codex runs in your launch directory, not the script install directory.
 - The default execution mode is `--full-auto --sandbox workspace-write`.
