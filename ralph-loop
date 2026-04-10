@@ -22,8 +22,8 @@ print_help() {
   echo ""
   echo "Options:"
   echo "  -c, --checklist <path>            Checklist file path (default: ./CHECKLIST.md)"
-  echo "  -i, --iterations <count>           Number of iterations to run (default: 10)"
-  echo "  -n, --instructions <path>        Instructions file path (default: ./INSTRUCTIONS.md)"
+  echo "  -i, --instructions <path>        Instructions file path (default: ./INSTRUCTIONS.md)"
+  echo "  -n, --iterations <count>           Number of iterations to run (default: 10)"
   echo "  -p, --progress <path>             Progress log path (default: ./PROGRESS.md)"
   echo "      --yolo                        Use --dangerously-bypass-approvals-and-sandbox"
   echo "  -h, --help                         Show this help"
@@ -46,20 +46,20 @@ while [[ $# -gt 0 ]]; do
       checklist_path="$2"
       shift 2
       ;;
-    -i|--iterations)
-      if [[ $# -lt 2 ]]; then
-        echo "Error: $1 requires a value" >&2
-        exit 1
-      fi
-      iterations="$2"
-      shift 2
-      ;;
-    -n|--instructions)
+    -i|--instructions)
       if [[ $# -lt 2 ]]; then
         echo "Error: $1 requires a value" >&2
         exit 1
       fi
       instructions_path="$2"
+      shift 2
+      ;;
+    -n|--iterations)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: $1 requires a value" >&2
+        exit 1
+      fi
+      iterations="$2"
       shift 2
       ;;
     -p|--progress)

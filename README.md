@@ -108,8 +108,8 @@ Or pass checklist and progress paths explicitly:
 You can also override the instructions file:
 
 ```bash
-./ralph-loop --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md --iterations 5
-./ralph-once --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md
+./ralph-loop -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md -n 5
+./ralph-once -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md
 ```
 
 Ralph has two execution modes:
