@@ -7,7 +7,7 @@ The repo has two entrypoints:
 - `./ralph-loop` reruns Codex until the work is done or an iteration limit is reached.
 - `./ralph-once` runs a single Codex pass and exits.
 
-If you add the repo directory to your shell `PATH`, you can invoke the scripts from any directory. Keep the entrypoint scripts next to `common.sh`: both `ralph-loop` and `ralph-once` source that file from their own directory. Codex still runs in the directory where you launch the command.
+You can use Ralph in two ways. You can keep it inside a project, usually under `scripts/`, and edit the bundled `CHECKLIST.md`, `PROGRESS.md`, and `INSTRUCTIONS.md` files. Or you can add the repo directory to your shell `PATH` and pass your own files with flags. In either setup, keep the entrypoint scripts next to `common.sh`: both `ralph-loop` and `ralph-once` source that file from their own directory. Codex still runs in the directory where you launch the command.
 
 By default the scripts run `codex exec --full-auto --sandbox workspace-write`. If you want the unsafe behavior, pass `--yolo` to use `--dangerously-bypass-approvals-and-sandbox` instead.
 
@@ -15,12 +15,7 @@ Ralph is intentionally non-interactive. It does not stop and ask the user to app
 
 ## What the scripts do
 
-The primary way to use Ralph is to pass your own files on the command line:
-
-```bash
-ralph-loop -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md -n 10
-ralph-once -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md
-```
+Ralph always works with three files: a checklist, a progress log, and an instructions file. You can edit the bundled copies in this repo, or you can point Ralph at your own files with flags.
 
 The file flags are:
 
@@ -41,7 +36,7 @@ If you do not pass custom paths, Ralph falls back to the bundled defaults in thi
 - `PROGRESS.md`
 - `INSTRUCTIONS.md`
 
-`ralph-loop` stops early if Codex outputs `<promise>COMPLETE</promise>`. Otherwise it exits with a non-zero status after the configured number of iterations.
+`ralph-loop` stops early when Codex determines that all checklist tasks are complete. Otherwise it exits with a non-zero status after the configured number of iterations.
 
 ## macOS installation
 
@@ -91,9 +86,48 @@ cd /path/to/ralph
 chmod +x ralph-loop ralph-once
 ```
 
-### 4. Add Ralph to your shell `PATH`
+## Two common ways to use this repo
 
-If you want to run `ralph-loop` and `ralph-once` from anywhere, add the Ralph repo directory itself to your `PATH`.
+### 1. Keep Ralph inside a project under `scripts/`
+
+If you want Ralph to live with one project, clone or copy this repo into that project's `scripts` directory.
+
+A common layout looks like this:
+
+```text
+your-project/
+  scripts/
+    ralph/
+      ralph-loop
+      ralph-once
+      common.sh
+      CHECKLIST.md
+      PROGRESS.md
+      INSTRUCTIONS.md
+```
+
+Edit these files to match your project and workflow:
+
+- `scripts/ralph/CHECKLIST.md`
+- `scripts/ralph/PROGRESS.md`
+- `scripts/ralph/INSTRUCTIONS.md`
+
+Those are the default files Ralph uses when you do not pass `--checklist`, `--progress`, or `--instructions`.
+
+Run Ralph from your project root so Codex works in that project:
+
+```bash
+cd /path/to/your-project
+./scripts/ralph/ralph-loop
+./scripts/ralph/ralph-loop -n 20
+./scripts/ralph/ralph-once
+```
+
+The scripts still load their default files from `scripts/ralph`, but Codex runs in the directory where you launch the command.
+
+### 2. Add the repo directory to your `PATH` and pass your own files
+
+If you want one Ralph install that you can reuse across projects, add the Ralph repo directory itself to your `PATH`.
 
 Do not symlink only the entrypoint scripts into another directory unless you also keep `common.sh` next to them. Both scripts load `common.sh` relative to their own location.
 
@@ -113,50 +147,39 @@ source ~/.bashrc
 
 Replace `/path/to/ralph` with the absolute path where you cloned or unzipped this repo.
 
-## Usage
-
-The most common usage is to point Ralph at your own files. If you added the repo directory to your `PATH`, you can drop the leading `./` from the examples below:
+Then point Ralph at your own files:
 
 ```bash
-./ralph-loop -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md -n 5
-./ralph-once -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md
-```
-
-You can still use the positional checklist argument as a shorthand for `--checklist`:
-
-```bash
-./ralph-loop ./path/to/my-checklist.md -n 5
-./ralph-once ./path/to/my-checklist.md
-```
-
-If you omit all file flags, Ralph uses the default files that ship with this repo:
-
-```bash
-./ralph-loop
-./ralph-loop -n 20
-./ralph-once
+ralph-loop -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md -n 5
+ralph-once -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md
 ```
 
 The long-form flags work too:
 
 ```bash
-./ralph-loop --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md --iterations 5
-./ralph-once --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md
+ralph-loop --checklist /path/to/CHECKLIST.md --progress /path/to/PROGRESS.md --instructions /path/to/INSTRUCTIONS.md --iterations 5
+ralph-once --checklist /path/to/CHECKLIST.md --progress /path/to/PROGRESS.md --instructions /path/to/INSTRUCTIONS.md
 ```
+
+Use this setup when your checklist, progress log, and instructions already live somewhere outside the Ralph repo.
+
+## Common options
 
 Ralph has two execution modes:
 
 ```bash
-./ralph-loop
-./ralph-loop --yolo
+ralph-loop
+ralph-loop --yolo
 ```
 
 Show help:
 
 ```bash
-./ralph-loop --help
-./ralph-once --help
+ralph-loop --help
+ralph-once --help
 ```
+
+If Ralph lives inside `scripts/ralph` instead of your `PATH`, use `./scripts/ralph/ralph-loop` and `./scripts/ralph/ralph-once` in those examples.
 
 ## How the files work together
 
