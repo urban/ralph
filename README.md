@@ -7,7 +7,7 @@ The repo has two entrypoints:
 - `./ralph-loop` reruns Codex until the work is done or an iteration limit is reached.
 - `./ralph-once` runs a single Codex pass and exits.
 
-If you add the scripts to your shell `PATH`, you can invoke them from any directory. The scripts load their default support files from their installed location, but Codex runs in the directory where you launch the command.
+If you add the repo directory to your shell `PATH`, you can invoke the scripts from any directory. Keep the entrypoint scripts next to `common.sh`: both `ralph-loop` and `ralph-once` source that file from their own directory. Codex still runs in the directory where you launch the command.
 
 By default the scripts run `codex exec --full-auto --sandbox workspace-write`. If you want the unsafe behavior, pass `--yolo` to use `--dangerously-bypass-approvals-and-sandbox` instead.
 
@@ -91,9 +91,31 @@ cd /path/to/ralph
 chmod +x ralph-loop ralph-once
 ```
 
+### 4. Add Ralph to your shell `PATH`
+
+If you want to run `ralph-loop` and `ralph-once` from anywhere, add the Ralph repo directory itself to your `PATH`.
+
+Do not symlink only the entrypoint scripts into another directory unless you also keep `common.sh` next to them. Both scripts load `common.sh` relative to their own location.
+
+For zsh on macOS:
+
+```bash
+echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+For bash:
+
+```bash
+echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Replace `/path/to/ralph` with the absolute path where you cloned or unzipped this repo.
+
 ## Usage
 
-The most common usage is to point Ralph at your own files:
+The most common usage is to point Ralph at your own files. If you added the repo directory to your `PATH`, you can drop the leading `./` from the examples below:
 
 ```bash
 ./ralph-loop -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md -n 5
