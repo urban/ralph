@@ -15,7 +15,27 @@ Ralph is intentionally non-interactive. It does not stop and ask the user to app
 
 ## What the scripts do
 
-Both scripts send the same three files to `codex exec`:
+The primary way to use Ralph is to pass your own files on the command line:
+
+```bash
+ralph-loop -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md -n 10
+ralph-once -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md
+```
+
+The file flags are:
+
+- `-c` / `--checklist` for the checklist file
+- `-p` / `--progress` for the progress log
+- `-i` / `--instructions` for the instructions file
+- `-n` / `--iterations` for the loop count in `ralph-loop`
+
+Both scripts pass three files to `codex exec`:
+
+- the checklist you provide with `-c`
+- the progress log you provide with `-p`
+- the instructions file you provide with `-i`
+
+If you do not pass custom paths, Ralph falls back to the bundled defaults in this repo:
 
 - `CHECKLIST.md`
 - `PROGRESS.md`
@@ -73,43 +93,33 @@ chmod +x ralph-loop ralph-once
 
 ## Usage
 
-Run the looping version:
-
-```bash
-./ralph-loop
-```
-
-Run a fixed number of passes:
-
-```bash
-./ralph-loop --iterations 20
-```
-
-Run a single pass:
-
-```bash
-./ralph-once
-```
-
-Use a different checklist file with either script:
-
-```bash
-./ralph-loop ./path/to/my-checklist.md --iterations 5
-./ralph-once ./path/to/my-checklist.md
-```
-
-Or pass checklist and progress paths explicitly:
-
-```bash
-./ralph-loop --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --iterations 5
-./ralph-once --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md
-```
-
-You can also override the instructions file:
+The most common usage is to point Ralph at your own files:
 
 ```bash
 ./ralph-loop -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md -n 5
 ./ralph-once -c ./path/to/my-checklist.md -p ./path/to/my-progress.md -i ./path/to/my-instructions.md
+```
+
+You can still use the positional checklist argument as a shorthand for `--checklist`:
+
+```bash
+./ralph-loop ./path/to/my-checklist.md -n 5
+./ralph-once ./path/to/my-checklist.md
+```
+
+If you omit all file flags, Ralph uses the default files that ship with this repo:
+
+```bash
+./ralph-loop
+./ralph-loop -n 20
+./ralph-once
+```
+
+The long-form flags work too:
+
+```bash
+./ralph-loop --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md --iterations 5
+./ralph-once --checklist ./path/to/my-checklist.md --progress ./path/to/my-progress.md --instructions ./path/to/my-instructions.md
 ```
 
 Ralph has two execution modes:
