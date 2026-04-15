@@ -1,16 +1,9 @@
-import { Console, Effect } from "effect";
+import { Effect } from "effect";
 import * as Command from "effect/unstable/cli/Command";
 import * as Flag from "effect/unstable/cli/Flag";
 
-import { isChecklistComplete, runCodexPass, runCodexPassCapture } from "../ralph/codex";
-import type { SharedFlagsInput } from "../ralph/domain";
-import { failWithMessage } from "../ralph/errors";
-import { prepareRunContext } from "../ralph/run";
-import { notifyIfAvailable } from "../ralph/system";
-
-interface LoopFlagsInput extends SharedFlagsInput {
-  readonly iterations: number;
-}
+import type { LoopFlagsInput, SharedFlagsInput } from "../ralph/domain";
+import { RalphRunner } from "../ralph/run";
 
 export const cliVersion = "0.0.0";
 
@@ -48,11 +41,9 @@ const iterationsFlag = Flag.integer("iterations").pipe(
 export const onceCommand = Command.make(
   "once",
   createSharedFlags(),
-  Effect.fn("onceCommand")(function* (
-    input: SharedFlagsInput,
-  ) {
-    const runContext = yield* prepareRunContext(input);
-    yield* runCodexPass(runContext);
+  Effect.fn("onceCommand")(function* (input: SharedFlagsInput) {
+    const ralphRunner = yield* RalphRunner;
+    yield* ralphRunner.runOnce(input);
   }),
 ).pipe(Command.withDescription("Run one Codex pass"));
 
@@ -62,27 +53,9 @@ export const loopCommand = Command.make(
     ...createSharedFlags(),
     iterations: iterationsFlag,
   },
-  Effect.fn("loopCommand")(function* (
-    input: LoopFlagsInput,
-  ) {
-    const runContext = yield* prepareRunContext(input);
-
-    for (let iteration = 1; iteration <= input.iterations; iteration += 1) {
-      yield* Console.log(`Iteration ${iteration}`);
-      yield* Console.log("--------------------------------");
-
-      const output = yield* Effect.scoped(runCodexPassCapture(runContext));
-      yield* Console.log(output);
-
-      if (isChecklistComplete(output)) {
-        yield* Console.log("Checklist complete, exiting.");
-        yield* notifyIfAvailable(`Checklist complete after ${iteration} iterations`);
-        return;
-      }
-    }
-
-    yield* notifyIfAvailable(`Checklist not complete after ${input.iterations} iterations`);
-    return yield* failWithMessage(`Checklist not complete after ${input.iterations} iterations.`);
+  Effect.fn("loopCommand")(function* (input: LoopFlagsInput) {
+    const ralphRunner = yield* RalphRunner;
+    yield* ralphRunner.runLoop(input);
   }),
 ).pipe(Command.withDescription("Run repeated Codex passes until complete or exhausted"));
 
@@ -94,4 +67,4 @@ export const ralphCommand = Command.make("ralph").pipe(
 export const runRalphCli = (args: ReadonlyArray<string>) =>
   Command.runWith(ralphCommand, {
     version: cliVersion,
-  })(args);
+  })(args).pipe(Effect.provide(RalphRunner.layer));

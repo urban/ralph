@@ -13,6 +13,10 @@ export interface SharedFlagsInput {
   readonly yolo: boolean;
 }
 
+export interface LoopFlagsInput extends SharedFlagsInput {
+  readonly iterations: number;
+}
+
 export interface PreparedRunContext {
   readonly workingDirectory: string;
   readonly checklistPath: string;

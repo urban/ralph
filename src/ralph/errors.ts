@@ -13,9 +13,7 @@ export class RalphExit extends Schema.TaggedErrorClass<RalphExit>()("RalphExit",
 export const failWithExitCode = (exitCode: number) =>
   Effect.fail(new RalphExit({ message: "", exitCode }));
 
-export const failWithMessage = Effect.fn("failWithMessage")(function* (
-  message: string,
-) {
+export const failWithMessage = Effect.fn("failWithMessage")(function* (message: string) {
   yield* Console.error(message);
   return yield* new RalphExit({ message, exitCode: 1 });
 });
