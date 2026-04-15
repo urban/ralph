@@ -1,13 +1,18 @@
 {
   "name": "ralph-effect",
+  "version": "0.0.0",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
+  "bin": {
+    "ralph": "./ralph"
+  },
   "scripts": {
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/platform-bun": "4.0.0-beta.49",
     "effect": "4.0.0-beta.49"
   },
   "devDependencies": {
