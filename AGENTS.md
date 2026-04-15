@@ -1,4 +1,5 @@
 <!-- effect:start -->
+
 ## Effect Best Practices
 
 **IMPORTANT:** Always consult the Effect v4 source mirror in `.repos/effect/`.
@@ -10,4 +11,5 @@ For Effect v4, prefer imports from the main `effect` package, eg `effect/CLI` an
 Use this for learning the library instead of browsing `node_modules/`.
 
 Never guess at Effect patterns or APIs. Check the full source code.
+
 <!-- effect:end -->

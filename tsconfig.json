@@ -2,8 +2,8 @@
   "compilerOptions": {
     "lib": ["ES2022"],
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
     "moduleDetection": "force",
     "types": ["bun"],
 
@@ -24,5 +24,6 @@
         "name": "@effect/language-service"
       }
     ]
-  }
+  },
+  "include": ["src/**/*"]
 }
