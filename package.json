@@ -18,7 +18,7 @@
     "cli": "bun src/cli.ts",
     "lint": "oxfmt && oxlint --fix",
     "prepare": "effect-language-service patch",
-    "test": "bun test",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -28,11 +28,13 @@
   "devDependencies": {
     "@changesets/cli": "2.30.0",
     "@effect/language-service": "0.85.1",
+    "@effect/vitest": "4.0.0-beta.49",
     "@types/bun": "latest",
     "husky": "9.1.7",
     "oxfmt": "0.45.0",
     "oxlint": "1.60.0",
-    "typescript": "6.0.2"
+    "typescript": "6.0.2",
+    "vitest": "4.1.4"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

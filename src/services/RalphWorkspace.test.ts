@@ -1,8 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Effect, Layer, Option } from "effect";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { expect, layer } from "@effect/vitest";
+import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import { join } from "node:path";
 
 import type { SharedFlagsInput } from "../domain/Ralph";
@@ -10,22 +8,24 @@ import { RalphWorkspace } from "./RalphWorkspace";
 
 const workspaceLayer = RalphWorkspace.layer.pipe(Layer.provideMerge(BunServices.layer));
 
-const runWorkspace = <A>(effect: Effect.Effect<A, unknown, RalphWorkspace>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(workspaceLayer)));
+const makeTempDirectory = Effect.fn("RalphWorkspace.test.makeTempDirectory")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-workspace-" });
+});
 
-const runWorkspaceResult = async <A>(effect: Effect.Effect<A, unknown, RalphWorkspace>) => {
-  try {
-    return {
-      ok: true as const,
-      value: await runWorkspace(effect),
-    };
-  } catch (error) {
-    return {
-      ok: false as const,
-      error,
-    };
-  }
-};
+const withWorkingDirectory = <A, E, R>(directory: string, self: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const originalCwd = process.cwd();
+      process.chdir(directory);
+      return originalCwd;
+    }),
+    () => self,
+    (originalCwd) =>
+      Effect.sync(() => {
+        process.chdir(originalCwd);
+      }),
+  );
 
 const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlagsInput => ({
   checklist: Option.none(),
@@ -37,136 +37,160 @@ const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlags
   ...overrides,
 });
 
-describe("RalphWorkspace", () => {
-  let originalCwd = "";
-  let tempDirectory = "";
+const expectFailureMessage = (result: Exit.Exit<unknown, unknown>, message: string) => {
+  expect(Exit.isFailure(result)).toBe(true);
 
-  beforeEach(async () => {
-    originalCwd = process.cwd();
-    tempDirectory = await mkdtemp(join(tmpdir(), "ralph-workspace-"));
-    process.chdir(tempDirectory);
-  });
+  if (!Exit.isFailure(result)) {
+    return;
+  }
 
-  afterEach(async () => {
-    process.chdir(originalCwd);
-    await rm(tempDirectory, { force: true, recursive: true });
-  });
+  const error = Cause.findErrorOption(result.cause);
+  expect(Option.isSome(error)).toBe(true);
 
-  test("init writes Ralph files into the launch directory", async () => {
-    await runWorkspace(
-      Effect.gen(function* () {
-        const workspace = yield* RalphWorkspace;
-        yield* workspace.init(Option.none());
-      }),
-    );
+  if (Option.isSome(error)) {
+    expect(error.value).toHaveProperty("message", message);
+    expect(error.value).toHaveProperty("exitCode", 1);
+  }
+};
 
-    expect((await readFile(join(tempDirectory, "CHECKLIST.md"), "utf8")).length).toBeGreaterThan(0);
-    expect((await readFile(join(tempDirectory, "INSTRUCTIONS.md"), "utf8")).length).toBeGreaterThan(
-      0,
-    );
-    expect((await readFile(join(tempDirectory, "PROGRESS.md"), "utf8")).length).toBeGreaterThan(0);
-  });
+layer(workspaceLayer)("RalphWorkspace", (it) => {
+  it.effect("init writes Ralph files into the launch directory", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
 
-  test("init creates backups before overwrite", async () => {
-    const projectDirectory = join(tempDirectory, "project");
-    await mkdir(projectDirectory, { recursive: true });
-    await writeFile(join(projectDirectory, "CHECKLIST.md"), "old checklist\n");
-    await writeFile(join(projectDirectory, "INSTRUCTIONS.md"), "old instructions\n");
-    await writeFile(join(projectDirectory, "PROGRESS.md"), "old progress\n");
+      yield* withWorkingDirectory(tempDirectory, workspace.init(Option.none()));
 
-    await runWorkspace(
-      Effect.gen(function* () {
-        const workspace = yield* RalphWorkspace;
-        yield* workspace.init(Option.some("./project"));
-      }),
-    );
+      const checklist = yield* fileSystem.readFileString(join(tempDirectory, "CHECKLIST.md"));
+      const instructions = yield* fileSystem.readFileString(join(tempDirectory, "INSTRUCTIONS.md"));
+      const progress = yield* fileSystem.readFileString(join(tempDirectory, "PROGRESS.md"));
 
-    const files = await readdir(projectDirectory);
-    const checklistBackup = files.find((fileName) => fileName.startsWith("CHECKLIST.md.bak."));
-    const instructionsBackup = files.find((fileName) =>
-      fileName.startsWith("INSTRUCTIONS.md.bak."),
-    );
-    const progressBackup = files.find((fileName) => fileName.startsWith("PROGRESS.md.bak."));
+      expect(checklist.length).toBeGreaterThan(0);
+      expect(instructions.length).toBeGreaterThan(0);
+      expect(progress.length).toBeGreaterThan(0);
+    }),
+  );
 
-    expect(checklistBackup).toBeDefined();
-    expect(instructionsBackup).toBeDefined();
-    expect(progressBackup).toBeDefined();
-    expect(await readFile(join(projectDirectory, checklistBackup!), "utf8")).toBe(
-      "old checklist\n",
-    );
-    expect(await readFile(join(projectDirectory, instructionsBackup!), "utf8")).toBe(
-      "old instructions\n",
-    );
-    expect(await readFile(join(projectDirectory, progressBackup!), "utf8")).toBe("old progress\n");
-  });
+  it.effect("init creates backups before overwrite", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
 
-  test("init rejects file targets", async () => {
-    const targetFile = join(tempDirectory, "not-a-directory");
-    await writeFile(targetFile, "nope\n");
-
-    const result = await runWorkspaceResult(
-      Effect.gen(function* () {
-        const workspace = yield* RalphWorkspace;
-        yield* workspace.init(Option.some("./not-a-directory"));
-      }),
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect((result.error as { message: string }).message).toBe(
-        `Init target is a file: ${await realpath(targetFile)}`,
+      yield* fileSystem.makeDirectory(projectDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(join(projectDirectory, "CHECKLIST.md"), "old checklist\n");
+      yield* fileSystem.writeFileString(
+        join(projectDirectory, "INSTRUCTIONS.md"),
+        "old instructions\n",
       );
-    }
-  });
+      yield* fileSystem.writeFileString(join(projectDirectory, "PROGRESS.md"), "old progress\n");
 
-  test("prepareRunContext uses --ralph-dir with per-file overrides and --cwd", async () => {
-    const ralphDirectory = join(tempDirectory, ".ralph");
-    const projectDirectory = join(tempDirectory, "project");
-    const customInstructions = join(tempDirectory, "custom-instructions.md");
+      yield* withWorkingDirectory(tempDirectory, workspace.init(Option.some("./project")));
 
-    await mkdir(ralphDirectory, { recursive: true });
-    await mkdir(projectDirectory, { recursive: true });
-    await writeFile(join(ralphDirectory, "CHECKLIST.md"), "checklist\n");
-    await writeFile(join(ralphDirectory, "INSTRUCTIONS.md"), "instructions\n");
-    await writeFile(join(ralphDirectory, "PROGRESS.md"), "progress\n");
-    await writeFile(customInstructions, "custom instructions\n");
+      const files = yield* fileSystem.readDirectory(projectDirectory);
+      const checklistBackup = files.find((fileName) => fileName.startsWith("CHECKLIST.md.bak."));
+      const instructionsBackup = files.find((fileName) =>
+        fileName.startsWith("INSTRUCTIONS.md.bak."),
+      );
+      const progressBackup = files.find((fileName) => fileName.startsWith("PROGRESS.md.bak."));
 
-    const context = await runWorkspace(
-      Effect.gen(function* () {
-        const workspace = yield* RalphWorkspace;
-        return yield* workspace.prepareRunContext(
+      expect(checklistBackup).toBeDefined();
+      expect(instructionsBackup).toBeDefined();
+      expect(progressBackup).toBeDefined();
+
+      if (
+        checklistBackup === undefined ||
+        instructionsBackup === undefined ||
+        progressBackup === undefined
+      ) {
+        return;
+      }
+
+      expect(yield* fileSystem.readFileString(join(projectDirectory, checklistBackup))).toBe(
+        "old checklist\n",
+      );
+      expect(yield* fileSystem.readFileString(join(projectDirectory, instructionsBackup))).toBe(
+        "old instructions\n",
+      );
+      expect(yield* fileSystem.readFileString(join(projectDirectory, progressBackup))).toBe(
+        "old progress\n",
+      );
+    }),
+  );
+
+  it.effect("init rejects file targets", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const targetFile = join(tempDirectory, "not-a-directory");
+
+      yield* fileSystem.writeFileString(targetFile, "nope\n");
+
+      const result = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.init(Option.some("./not-a-directory")).pipe(Effect.exit),
+      );
+      const resolvedTargetFile = yield* fileSystem.realPath(targetFile);
+
+      expectFailureMessage(result, `Init target is a file: ${resolvedTargetFile}`);
+    }),
+  );
+
+  it.effect("prepareRunContext uses --ralph-dir with per-file overrides and --cwd", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const ralphDirectory = join(tempDirectory, ".ralph");
+      const projectDirectory = join(tempDirectory, "project");
+      const customInstructions = join(tempDirectory, "custom-instructions.md");
+
+      yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
+      yield* fileSystem.makeDirectory(projectDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(join(ralphDirectory, "CHECKLIST.md"), "checklist\n");
+      yield* fileSystem.writeFileString(join(ralphDirectory, "INSTRUCTIONS.md"), "instructions\n");
+      yield* fileSystem.writeFileString(join(ralphDirectory, "PROGRESS.md"), "progress\n");
+      yield* fileSystem.writeFileString(customInstructions, "custom instructions\n");
+
+      const context = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareRunContext(
           makeSharedFlags({
             instructions: Option.some("./custom-instructions.md"),
             ralphDir: Option.some("./.ralph"),
             cwd: Option.some("./project"),
           }),
-        );
-      }),
-    );
+        ),
+      );
 
-    const resolvedRalphDirectory = await realpath(ralphDirectory);
-    const resolvedProjectDirectory = await realpath(projectDirectory);
-    const resolvedCustomInstructions = await realpath(customInstructions);
+      const resolvedRalphDirectory = yield* fileSystem.realPath(ralphDirectory);
+      const resolvedProjectDirectory = yield* fileSystem.realPath(projectDirectory);
+      const resolvedCustomInstructions = yield* fileSystem.realPath(customInstructions);
 
-    expect(context.checklistPath).toBe(join(resolvedRalphDirectory, "CHECKLIST.md"));
-    expect(context.instructionsPath).toBe(resolvedCustomInstructions);
-    expect(context.progressPath).toBe(join(resolvedRalphDirectory, "PROGRESS.md"));
-    expect(context.workingDirectory).toBe(resolvedProjectDirectory);
-  });
+      expect(context.checklistPath).toBe(join(resolvedRalphDirectory, "CHECKLIST.md"));
+      expect(context.instructionsPath).toBe(resolvedCustomInstructions);
+      expect(context.progressPath).toBe(join(resolvedRalphDirectory, "PROGRESS.md"));
+      expect(context.workingDirectory).toBe(resolvedProjectDirectory);
+    }),
+  );
 
-  test("prepareRunContext fails closed when runtime inputs are missing", async () => {
-    const result = await runWorkspaceResult(
-      Effect.gen(function* () {
-        const workspace = yield* RalphWorkspace;
-        return yield* workspace.prepareRunContext(makeSharedFlags());
-      }),
-    );
+  it.effect("prepareRunContext fails closed when runtime inputs are missing", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const tempDirectory = yield* makeTempDirectory();
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect((result.error as { message: string }).message).toBe(
+      const result = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareRunContext(makeSharedFlags()).pipe(Effect.exit),
+      );
+
+      expectFailureMessage(
+        result,
         "Missing Ralph runtime inputs: --checklist, --instructions, --progress. Pass --ralph-dir or all of --checklist, --instructions, and --progress.",
       );
-    }
-  });
+    }),
+  );
 });
