@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "bin": {
-    "ralph": "./ralph"
+    "ralph": "./src/cli.ts"
   },
   "files": [
     "src/**/*.ts",
@@ -13,16 +13,9 @@
     "ralph-loop"
   ],
   "type": "module",
-  "module": "src/index.ts",
-  "exports": {
-    "./package.json": "./package.json",
-    ".": {
-      "import": "./src/index.ts"
-    }
-  },
   "scripts": {
     "check": "bun run lint && bun run typecheck && bun run test",
-    "cli": "bun run src/cli/main.ts",
+    "cli": "bun src/cli.ts",
     "lint": "oxfmt && oxlint --fix",
     "prepare": "effect-language-service patch",
     "test": "bun test",

@@ -2,8 +2,8 @@ import { Context, Effect, Layer } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import type { RalphExit } from "./errors";
-import { failWithMessage } from "./errors";
+import type { RalphExit } from "../errors/RalphExit";
+import { failWithMessage } from "../errors/RalphExit";
 
 export class HostTools extends Context.Service<
   HostTools,
@@ -15,7 +15,7 @@ export class HostTools extends Context.Service<
     ): Effect.Effect<void, RalphExit>;
     notifyIfAvailable(message: string): Effect.Effect<void>;
   }
->()("ralph-effect/ralph/HostTools") {
+>()("ralph-effect/services/HostTools") {
   static readonly layer = Layer.effect(
     HostTools,
     Effect.gen(function* () {

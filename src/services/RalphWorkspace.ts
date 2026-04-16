@@ -6,9 +6,9 @@ import {
   type RalphFileRole,
   type RalphFilePaths,
   type SharedFlagsInput,
-} from "./domain";
-import type { RalphExit } from "./errors";
-import { failWithMessage } from "./errors";
+} from "../domain/Ralph";
+import type { RalphExit } from "../errors/RalphExit";
+import { failWithMessage } from "../errors/RalphExit";
 
 const ralphFileRoles = Object.keys(ralphFileNames) as ReadonlyArray<RalphFileRole>;
 
@@ -32,7 +32,7 @@ export class RalphWorkspace extends Context.Service<
     init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>;
     prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
   }
->()("ralph-effect/ralph/RalphWorkspace") {
+>()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
     RalphWorkspace,
     Effect.gen(function* () {
@@ -44,12 +44,11 @@ export class RalphWorkspace extends Context.Service<
 
       const resolveTemplateDirectory = Effect.fn("RalphWorkspace.resolveTemplateDirectory")(
         function* () {
-          const sourcePath = yield* path
-            .fromFileUrl(new URL(import.meta.url))
-            .pipe(Effect.catch(() => failWithMessage("Could not resolve Ralph package root.")));
-
-          const packageRoot = path.dirname(path.dirname(path.dirname(sourcePath)));
-          return path.join(packageRoot, "src", "templates");
+          return yield* path
+            .fromFileUrl(new URL("../templates", import.meta.url))
+            .pipe(
+              Effect.catch(() => failWithMessage("Could not resolve Ralph template directory.")),
+            );
         },
       );
 

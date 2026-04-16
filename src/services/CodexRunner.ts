@@ -2,9 +2,9 @@ import { Context, Effect, Layer, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
-import type { PreparedRunContext } from "./domain";
-import type { RalphExit } from "./errors";
-import { failWithExitCode, failWithMessage } from "./errors";
+import type { PreparedRunContext } from "../domain/Ralph";
+import type { RalphExit } from "../errors/RalphExit";
+import { failWithExitCode, failWithMessage } from "../errors/RalphExit";
 
 const completionMarker = "<promise>COMPLETE</promise>";
 
@@ -65,7 +65,7 @@ export class CodexRunner extends Context.Service<
     runCapture(runContext: PreparedRunContext): Effect.Effect<string, RalphExit>;
     isChecklistComplete(output: string): boolean;
   }
->()("ralph-effect/ralph/CodexRunner") {
+>()("ralph-effect/services/CodexRunner") {
   static readonly layer = Layer.effect(
     CodexRunner,
     Effect.gen(function* () {

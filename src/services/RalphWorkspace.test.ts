@@ -5,8 +5,8 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { SharedFlagsInput } from "../src/ralph/domain";
-import { RalphWorkspace } from "../src/ralph/workspace";
+import type { SharedFlagsInput } from "../domain/Ralph";
+import { RalphWorkspace } from "./RalphWorkspace";
 
 const workspaceLayer = RalphWorkspace.layer.pipe(Layer.provideMerge(BunServices.layer));
 
