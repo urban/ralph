@@ -33,6 +33,7 @@ source_artifacts:
 ## Capability Area: Initialize Ralph Files
 
 ### Story: Initialize Ralph in the current directory
+
 - Story ID: US1.1
 - Actor: CLI operator
 - Situation: The operator is in a repository or working directory that needs Ralph's default files and runs `ralph init` with no operand.
@@ -41,6 +42,7 @@ source_artifacts:
 - Observation: The command succeeds and the three Ralph files appear in the directory where the operator launched the command.
 
 ### Story: Initialize Ralph in a supplied target directory
+
 - Story ID: US1.2
 - Actor: CLI operator
 - Situation: The operator wants Ralph's files in a specific relative directory and runs `ralph init` with a target directory operand.
@@ -49,6 +51,7 @@ source_artifacts:
 - Observation: The command succeeds, creates the directory when needed, and writes the three Ralph files into the requested directory.
 
 ### Story: Reject a file target during init
+
 - Story ID: US1.3
 - Actor: CLI operator
 - Situation: The operator runs `ralph init` with an operand that resolves to an existing file instead of a directory.
@@ -57,6 +60,7 @@ source_artifacts:
 - Observation: The command exits with an error that the target is a file and no Ralph files are written there.
 
 ### Story: Preserve existing Ralph files during reinit
+
 - Story ID: US1.4
 - Actor: CLI operator
 - Situation: The target directory already contains one or more Ralph files and the operator reruns `ralph init` there.
@@ -67,6 +71,7 @@ source_artifacts:
 ## Capability Area: Resolve Ralph Files for Runs
 
 ### Story: Run once or loop against one Ralph directory
+
 - Story ID: US1.5
 - Actor: CLI operator
 - Situation: The operator keeps Ralph's files in a separate directory and wants `ralph once` or `ralph loop` to use that set.
@@ -75,6 +80,7 @@ source_artifacts:
 - Observation: The run uses the checklist, instructions, and progress content from the specified Ralph directory.
 
 ### Story: Override a shared Ralph directory with specific file flags
+
 - Story ID: US1.6
 - Actor: CLI operator
 - Situation: The operator uses `--ralph-dir` but needs one or more Ralph files to come from a different path for a specific run.
@@ -83,6 +89,7 @@ source_artifacts:
 - Observation: The run reflects the explicitly flagged file content for overridden files and the shared Ralph directory content for the rest.
 
 ### Story: Run with explicit file flags and no shared Ralph directory
+
 - Story ID: US1.7
 - Actor: CLI operator
 - Situation: The operator wants to run `ralph once` or `ralph loop` with explicit checklist, instructions, and progress paths and does not want to set `--ralph-dir`.
@@ -91,6 +98,7 @@ source_artifacts:
 - Observation: The run uses the explicitly supplied file paths and starts without requiring `--ralph-dir`.
 
 ### Story: Fail fast when runtime Ralph inputs are missing
+
 - Story ID: US1.8
 - Actor: CLI operator
 - Situation: The operator runs `ralph once` or `ralph loop` without `--ralph-dir` and without explicit `--checklist`, `--instructions`, or `--progress` flags.
@@ -101,6 +109,7 @@ source_artifacts:
 ## Capability Area: Control Codex Execution Directory
 
 ### Story: Run Codex in a different working directory
+
 - Story ID: US1.9
 - Actor: CLI operator
 - Situation: The operator wants Ralph's files to come from one directory but wants Codex to inspect and edit a different project directory.

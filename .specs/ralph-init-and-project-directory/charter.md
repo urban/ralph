@@ -55,4 +55,4 @@ source_artifacts: {}
 - SC1.5: An operator can run `ralph once` or `ralph loop` with `--cwd <directory>` so Codex runs against that directory instead of the launch directory.
 - SC1.6: The bundled Ralph repo copies of `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md` are used only as `ralph init` templates and are never used as implicit runtime inputs for `ralph once` or `ralph loop`.
 - SC1.7: When an operator runs `ralph once` or `ralph loop` without `--ralph-dir` and without explicit `--checklist`, `--instructions`, or `--progress` flags, Ralph exits with a clear error instead of falling back to bundled or discovered files.
-- SC1.8: An operator can still run `ralph once` or `ralph loop` using explicit `--checklist`, `--instructions`, and `--progress` flags without supplying `--ralph-dir`. 
+- SC1.8: An operator can still run `ralph once` or `ralph loop` using explicit `--checklist`, `--instructions`, and `--progress` flags without supplying `--ralph-dir`.

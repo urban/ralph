@@ -174,11 +174,11 @@ The key data seam is the prepared run contract that `RalphRunner` passes into `C
 
 ```ts
 export interface PreparedRunContext {
-  readonly workingDirectory: string
-  readonly checklistPath: string
-  readonly instructionsPath: string
-  readonly progressPath: string
-  readonly yolo: boolean
+  readonly workingDirectory: string;
+  readonly checklistPath: string;
+  readonly instructionsPath: string;
+  readonly progressPath: string;
+  readonly yolo: boolean;
 }
 ```
 
@@ -186,12 +186,12 @@ The shared flag payload should expand rather than invent a second ad hoc run-inp
 
 ```ts
 export interface SharedFlagsInput {
-  readonly checklist: Option.Option<string>
-  readonly instructions: Option.Option<string>
-  readonly progress: Option.Option<string>
-  readonly ralphDir: Option.Option<string>
-  readonly cwd: Option.Option<string>
-  readonly yolo: boolean
+  readonly checklist: Option.Option<string>;
+  readonly instructions: Option.Option<string>;
+  readonly progress: Option.Option<string>;
+  readonly ralphDir: Option.Option<string>;
+  readonly cwd: Option.Option<string>;
+  readonly yolo: boolean;
 }
 ```
 
@@ -210,10 +210,13 @@ export interface SharedFlagsInput {
 The proposed service seam keeps current Effect patterns and moves the growing path-resolution policy into one `Context.Service` instead of leaving it embedded inside `RalphRunner`.
 
 ```ts
-export class RalphWorkspace extends Context.Service<RalphWorkspace, {
-  init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>
-  prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>
-}>()("ralph-effect/ralph/RalphWorkspace") {}
+export class RalphWorkspace extends Context.Service<
+  RalphWorkspace,
+  {
+    init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>;
+    prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
+  }
+>()("ralph-effect/ralph/RalphWorkspace") {}
 ```
 
 This seam is durable because callers only need two jobs from it: materialize Ralph files from templates and prepare a validated run context. It hides backup naming, template lookup, and resolution precedence without enlarging the public command surface.
