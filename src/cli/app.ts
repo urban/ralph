@@ -63,7 +63,7 @@ export const initCommand = Command.make(
     const ralphRunner = yield* RalphRunner;
     yield* ralphRunner.init(input);
   }),
-).pipe(Command.withDescription("Write Ralph template files"));
+).pipe(Command.withDescription("Write bundled Ralph template files"));
 
 export const onceCommand = Command.make(
   "once",

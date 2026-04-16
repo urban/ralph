@@ -10,7 +10,7 @@ It runs Codex against three files:
 
 Main entrypoints:
 
-- `ralph init [target-directory]` — write Ralph template files
+- `ralph init [target-directory]` — write bundled Ralph template files
 - `ralph once` — run one Codex pass
 - `ralph loop` — rerun until complete or iteration limit hit
 
@@ -31,6 +31,8 @@ Pass either:
 Explicit file flags override `--ralph-dir` per file.
 
 Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph`.
+
+The bundled `init` templates live in `src/templates/` inside this repo.
 
 Codex runs in the launch directory by default. Use `--cwd <directory>` to run Codex somewhere else.
 
@@ -112,7 +114,7 @@ chmod +x ralph ralph-once ralph-loop
 
 ## Notes
 
-- `init` backs up existing Ralph files before overwrite with sibling names like `CHECKLIST.md.bak.<timestamp>`.
+- `init` copies bundled templates from `src/templates/` and backs up existing Ralph files before overwrite with sibling names like `CHECKLIST.md.bak.<timestamp>`.
 - `loop` stops early when stdout contains `<promise>COMPLETE</promise>`.
 - Optional desktop notifications use `tt notify` when `tt` exists.
 - Ralph is non-interactive by design.

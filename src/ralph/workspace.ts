@@ -48,7 +48,8 @@ export class RalphWorkspace extends Context.Service<
             .fromFileUrl(new URL(import.meta.url))
             .pipe(Effect.catch(() => failWithMessage("Could not resolve Ralph package root.")));
 
-          return path.dirname(path.dirname(path.dirname(sourcePath)));
+          const packageRoot = path.dirname(path.dirname(path.dirname(sourcePath)));
+          return path.join(packageRoot, "src", "templates");
         },
       );
 
