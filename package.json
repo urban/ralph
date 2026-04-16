@@ -6,7 +6,13 @@
     "ralph": "./ralph"
   },
   "files": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "CHECKLIST.md",
+    "INSTRUCTIONS.md",
+    "PROGRESS.md",
+    "ralph",
+    "ralph-once",
+    "ralph-loop"
   ],
   "type": "module",
   "module": "src/index.ts",
@@ -17,10 +23,11 @@
     }
   },
   "scripts": {
-    "check": "bun run lint && bun run typecheck",
+    "check": "bun run lint && bun run typecheck && bun run test",
     "cli": "bun run src/cli/main.ts",
     "lint": "oxfmt && oxlint --fix",
     "prepare": "effect-language-service patch",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

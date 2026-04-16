@@ -8,8 +8,9 @@ It runs Codex against three files:
 - a progress log
 - an instructions file
 
-Main entrypoint:
+Main entrypoints:
 
+- `ralph init [target-directory]` — write Ralph template files
 - `ralph once` — run one Codex pass
 - `ralph loop` — rerun until complete or iteration limit hit
 
@@ -18,36 +19,47 @@ Legacy wrappers still work:
 - `./ralph-once` → `./ralph once`
 - `./ralph-loop` → `./ralph loop`
 
-## Defaults
+## Runtime inputs
 
-If you do not pass file flags, Ralph uses the bundled files in this repo:
+`ralph once` and `ralph loop` require runtime Ralph inputs.
 
-- `CHECKLIST.md`
-- `PROGRESS.md`
-- `INSTRUCTIONS.md`
+Pass either:
 
-Relative paths passed with flags resolve from the directory where you launch `ralph`.
+- `--ralph-dir <directory>` with `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md`
+- all three explicit file flags: `--checklist`, `--instructions`, `--progress`
 
-Codex still runs against that launch directory.
+Explicit file flags override `--ralph-dir` per file.
+
+Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph`.
+
+Codex runs in the launch directory by default. Use `--cwd <directory>` to run Codex somewhere else.
 
 ## Usage
 
 ```bash
-./ralph once
-./ralph loop
-./ralph loop -n 20
-./ralph once -c ./CHECKLIST.md -p ./PROGRESS.md -i ./INSTRUCTIONS.md
+./ralph init
+./ralph init ./.ralph
+./ralph once --ralph-dir ./.ralph
+./ralph loop --ralph-dir ./.ralph -n 20
+./ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
+./ralph once --ralph-dir ./.ralph --cwd .
 ```
 
 If the repo is on your `PATH`, drop the leading `./`.
 
 ## Flags
 
-Shared flags on both commands:
+`init` supports:
+
+- `[target-directory]`
+
+Shared flags on `once` and `loop`:
 
 - `-c`, `--checklist <path>`
 - `-i`, `--instructions <path>`
 - `-p`, `--progress <path>`
+- `--ralph-dir <directory>`
+- `--cwd <directory>`
 - `--yolo`
 
 `loop` also supports:
@@ -94,11 +106,13 @@ Then run:
 
 ```bash
 chmod +x ralph ralph-once ralph-loop
-./ralph once
+./ralph init
+./ralph once --ralph-dir .
 ```
 
 ## Notes
 
+- `init` backs up existing Ralph files before overwrite with sibling names like `CHECKLIST.md.bak.<timestamp>`.
 - `loop` stops early when stdout contains `<promise>COMPLETE</promise>`.
 - Optional desktop notifications use `tt notify` when `tt` exists.
 - Ralph is non-interactive by design.
