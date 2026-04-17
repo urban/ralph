@@ -1,5 +1,5 @@
 {
-  "name": "ralph-effect",
+  "name": "@urban/ralph",
   "version": "0.0.0",
   "private": true,
   "bin": {
@@ -7,10 +7,7 @@
   },
   "files": [
     "src/**/*.ts",
-    "src/templates/*.md",
-    "ralph",
-    "ralph-once",
-    "ralph-loop"
+    "src/templates/*.md"
   ],
   "type": "module",
   "scripts": {

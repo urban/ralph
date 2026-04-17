@@ -14,11 +14,6 @@ Main entrypoints:
 - `ralph once` — run one Codex pass
 - `ralph loop` — rerun until complete or iteration limit hit
 
-Legacy wrappers still work:
-
-- `./ralph-once` → `./ralph once`
-- `./ralph-loop` → `./ralph loop`
-
 ## Runtime inputs
 
 `ralph once` and `ralph loop` require runtime Ralph inputs.
@@ -30,7 +25,7 @@ Pass either:
 
 Explicit file flags override `--ralph-dir` per file.
 
-Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph`.
+Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph` or `bun run cli` locally.
 
 The bundled `init` templates live in `src/templates/` inside this repo.
 
@@ -39,15 +34,20 @@ Codex runs in the launch directory by default. Use `--cwd <directory>` to run Co
 ## Usage
 
 ```bash
-./ralph init
-./ralph init ./.ralph
-./ralph once --ralph-dir ./.ralph
-./ralph loop --ralph-dir ./.ralph -n 20
-./ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
-./ralph once --ralph-dir ./.ralph --cwd .
+ralph init
+ralph init ./.ralph
+ralph once --ralph-dir ./.ralph
+ralph loop --ralph-dir ./.ralph -n 20
+ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
+ralph once --ralph-dir ./.ralph --cwd .
 ```
 
-If the repo is on your `PATH`, drop the leading `./`.
+Local repo dev:
+
+```bash
+bun run cli init
+bun run cli once --ralph-dir ./.ralph
+```
 
 ## Flags
 
@@ -71,9 +71,9 @@ Shared flags on `once` and `loop`:
 Show help:
 
 ```bash
-./ralph --help
-./ralph once --help
-./ralph loop --help
+ralph --help
+ralph once --help
+ralph loop --help
 ```
 
 ## Execution mode
@@ -104,12 +104,36 @@ brew install bun
 npm install -g @openai/codex
 ```
 
+Put `ralph` on your `PATH` from this checkout:
+
+```bash
+bun install
+npm link
+```
+
+Use `npm link`, not `bun link`. Current Bun releases have a limitation around globally linking local package `bin` entries, so `bun link` does not reliably expose the `ralph` command on your `PATH`. `npm link` does.
+
+If `ralph` is not found, add your npm global bin dir to `PATH`:
+
+```bash
+export PATH="$(npm prefix -g)/bin:$PATH"
+```
+
+Persist that in your shell rc, for example `~/.zshrc` or `~/.bashrc`.
+
 Then run:
 
 ```bash
-chmod +x ralph ralph-once ralph-loop
-./ralph init
-./ralph once --ralph-dir .
+ralph init
+ralph once --ralph-dir .
+```
+
+Local repo dev:
+
+```bash
+bun install
+bun run cli init
+bun run cli once --ralph-dir .
 ```
 
 ## Notes
