@@ -1,210 +1,144 @@
 # Ralph
 
-Ralph is a small shell wrapper around the Codex CLI. It runs Codex against a checklist, a progress log, and a fixed instruction prompt so you can drive checklist-based work from a simple local repo.
+Ralph is a small Bun CLI around `codex exec`.
 
-The repo has two entrypoints:
+It runs Codex against three files:
 
-- `./ralph-loop` reruns Codex until the work is done or an iteration limit is reached.
-- `./ralph-once` runs a single Codex pass and exits.
+- a checklist
+- a progress log
+- an instructions file
 
-You can use Ralph in two ways. You can keep it inside a project, usually under `scripts/`, and edit the bundled `CHECKLIST.md`, `PROGRESS.md`, and `INSTRUCTIONS.md` files. Or you can add the repo directory to your shell `PATH` and pass your own files with flags. In either setup, keep the entrypoint scripts next to `common.sh`: both `ralph-loop` and `ralph-once` source that file from their own directory. Codex still runs in the directory where you launch the command.
+Main entrypoints:
 
-By default the scripts run `codex exec --full-auto --sandbox workspace-write`. If you want the unsafe behavior, pass `--yolo` to use `--dangerously-bypass-approvals-and-sandbox` instead.
+- `ralph init [target-directory]` — write bundled Ralph template files
+- `ralph once` — run one Codex pass
+- `ralph loop` — rerun until complete or iteration limit hit
 
-Ralph is intentionally non-interactive. It does not stop and ask the user to approve commands mid-run. In the default mode, Codex is expected to run automatically inside the `workspace-write` sandbox. If that is not enough for a given task, the run may fail instead of prompting for approval. `--yolo` exists for users who want unrestricted automatic execution instead.
+## Runtime inputs
 
-## What the scripts do
+`ralph once` and `ralph loop` require runtime Ralph inputs.
 
-Ralph always works with three files: a checklist, a progress log, and an instructions file. You can edit the bundled copies in this repo, or you can point Ralph at your own files with flags.
+Pass either:
 
-The file flags are:
+- `--ralph-dir <directory>` with `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md`
+- all three explicit file flags: `--checklist`, `--instructions`, `--progress`
 
-- `-c` / `--checklist` for the checklist file
-- `-p` / `--progress` for the progress log
-- `-i` / `--instructions` for the instructions file
-- `-n` / `--iterations` for the loop count in `ralph-loop`
+Explicit file flags override `--ralph-dir` per file.
 
-Both scripts pass three files to `codex exec`:
+Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph` or `bun run cli` locally.
 
-- the checklist you provide with `-c`
-- the progress log you provide with `-p`
-- the instructions file you provide with `-i`
+The bundled `init` templates live in `src/templates/` inside this repo.
 
-If you do not pass custom paths, Ralph falls back to the bundled defaults in this repo:
+Codex runs in the launch directory by default. Use `--cwd <directory>` to run Codex somewhere else.
 
-- `CHECKLIST.md`
-- `PROGRESS.md`
-- `INSTRUCTIONS.md`
-
-`ralph-loop` stops early when Codex determines that all checklist tasks are complete. Otherwise it exits with a non-zero status after the configured number of iterations.
-
-## macOS installation
-
-### 1. Install the command-line prerequisites
-
-If you do not already have them:
+## Usage
 
 ```bash
-xcode-select --install
-brew install git node
+ralph init
+ralph init ./.ralph
+ralph once --ralph-dir ./.ralph
+ralph loop --ralph-dir ./.ralph -n 20
+ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
+ralph once --ralph-dir ./.ralph --cwd .
 ```
 
-If you do not use Homebrew yet, install it first from [brew.sh](https://brew.sh).
-
-### 2. Install Codex CLI
-
-OpenAI's current Codex CLI docs are here:
-
-- [Codex CLI docs](https://developers.openai.com/codex/cli)
-
-Install the CLI:
+Local repo dev:
 
 ```bash
-npm install -g @openai/codex
+bun run cli init
+bun run cli once --ralph-dir ./.ralph
 ```
 
-Then run Codex once and follow the sign-in prompt:
+## Flags
 
-```bash
-codex
-```
+`init` supports:
 
-### 3. Download this repo
+- `[target-directory]`
 
-Clone it:
+Shared flags on `once` and `loop`:
 
-```bash
-git clone https://github.com/urban/ralph.git
-cd ralph
-chmod +x ralph-loop ralph-once
-```
+- `-c`, `--checklist <path>`
+- `-i`, `--instructions <path>`
+- `-p`, `--progress <path>`
+- `--ralph-dir <directory>`
+- `--cwd <directory>`
+- `--yolo`
 
-Or download the ZIP from GitHub, unzip it, and then:
+`loop` also supports:
 
-```bash
-cd /path/to/ralph
-chmod +x ralph-loop ralph-once
-```
-
-## Two common ways to use this repo
-
-### 1. Keep Ralph inside a project under `scripts/`
-
-If you want Ralph to live with one project, clone or copy this repo into that project's `scripts` directory.
-
-A common layout looks like this:
-
-```text
-your-project/
-  scripts/
-    ralph/
-      ralph-loop
-      ralph-once
-      common.sh
-      CHECKLIST.md
-      PROGRESS.md
-      INSTRUCTIONS.md
-```
-
-Edit these files to match your project and workflow:
-
-- `scripts/ralph/CHECKLIST.md`
-- `scripts/ralph/PROGRESS.md`
-- `scripts/ralph/INSTRUCTIONS.md`
-
-Those are the default files Ralph uses when you do not pass `--checklist`, `--progress`, or `--instructions`.
-
-Run Ralph from your project root so Codex works in that project:
-
-```bash
-cd /path/to/your-project
-./scripts/ralph/ralph-loop
-./scripts/ralph/ralph-loop -n 20
-./scripts/ralph/ralph-once
-```
-
-The scripts still load their default files from `scripts/ralph`, but Codex runs in the directory where you launch the command.
-
-### 2. Add the repo directory to your `PATH` and pass your own files
-
-If you want one Ralph install that you can reuse across projects, add the Ralph repo directory itself to your `PATH`.
-
-Do not symlink only the entrypoint scripts into another directory unless you also keep `common.sh` next to them. Both scripts load `common.sh` relative to their own location.
-
-For zsh on macOS, add Ralph to the startup file your shell actually uses. Many setups use `~/.zshrc`. If you keep your zsh config in `~/.config/zsh/.zprofile`, use that instead.
-
-Using `~/.zshrc`:
-
-```bash
-echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-Using `~/.config/zsh/.zprofile`:
-
-```bash
-echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.config/zsh/.zprofile
-source ~/.config/zsh/.zprofile
-```
-
-For bash:
-
-```bash
-echo 'export PATH="/path/to/ralph:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Replace `/path/to/ralph` with the absolute path where you cloned or unzipped this repo.
-
-Then point Ralph at your own files:
-
-```bash
-ralph-loop -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md -n 5
-ralph-once -c /path/to/CHECKLIST.md -p /path/to/PROGRESS.md -i /path/to/INSTRUCTIONS.md
-```
-
-The long-form flags work too:
-
-```bash
-ralph-loop --checklist /path/to/CHECKLIST.md --progress /path/to/PROGRESS.md --instructions /path/to/INSTRUCTIONS.md --iterations 5
-ralph-once --checklist /path/to/CHECKLIST.md --progress /path/to/PROGRESS.md --instructions /path/to/INSTRUCTIONS.md
-```
-
-Use this setup when your checklist, progress log, and instructions already live somewhere outside the Ralph repo.
-
-## Common options
-
-Ralph has two execution modes:
-
-```bash
-ralph-loop
-ralph-loop --yolo
-```
+- `-n`, `--iterations <count>`
 
 Show help:
 
 ```bash
-ralph-loop --help
-ralph-once --help
+ralph --help
+ralph once --help
+ralph loop --help
 ```
 
-If Ralph lives inside `scripts/ralph` instead of your `PATH`, use `./scripts/ralph/ralph-loop` and `./scripts/ralph/ralph-once` in those examples.
+## Execution mode
 
-## How the files work together
+Default mode:
 
-- `ralph-loop` handles repeated runs, completion detection, iteration limits, and optional desktop notifications.
-- `ralph-once` runs the same Codex command exactly one time.
-- `common.sh` contains the shared shell helpers used by both entrypoints.
-- `CHECKLIST.md` is the default task list Ralph gives to Codex.
-- `INSTRUCTIONS.md` defines the rules for each Codex pass.
-- `PROGRESS.md` is the handoff log between passes.
-- Codex runs in your launch directory, not the script install directory.
-- The default execution mode is `--full-auto --sandbox workspace-write`.
-- `--yolo` switches to `--dangerously-bypass-approvals-and-sandbox`.
+```bash
+codex exec --full-auto --sandbox workspace-write
+```
+
+`--yolo` switches to:
+
+```bash
+codex exec --dangerously-bypass-approvals-and-sandbox
+```
+
+## Install
+
+Prereqs:
+
+- Bun
+- Codex CLI
+
+Example:
+
+```bash
+brew install bun
+npm install -g @openai/codex
+```
+
+Put `ralph` on your `PATH` from this checkout:
+
+```bash
+bun install
+npm link
+```
+
+Use `npm link`, not `bun link`. Current Bun releases have a limitation around globally linking local package `bin` entries, so `bun link` does not reliably expose the `ralph` command on your `PATH`. `npm link` does.
+
+If `ralph` is not found, add your npm global bin dir to `PATH`:
+
+```bash
+export PATH="$(npm prefix -g)/bin:$PATH"
+```
+
+Persist that in your shell rc, for example `~/.zshrc` or `~/.bashrc`.
+
+Then run:
+
+```bash
+ralph init
+ralph once --ralph-dir .
+```
+
+Local repo dev:
+
+```bash
+bun install
+bun run cli init
+bun run cli once --ralph-dir .
+```
 
 ## Notes
 
-- The optional `tt` command is used only by `ralph-loop` for desktop notifications. Ralph still works if `tt` is not installed.
-- `PROGRESS.md` is part of the workflow. Do not delete it unless you also change the scripts.
-- Both entrypoints expect `codex` to be available in your shell path.
-- For safest use, run Ralph inside a sandbox and a Git repository so you can inspect or roll back changes between passes.
+- `init` copies bundled templates from `src/templates/` and backs up existing Ralph files before overwrite with sibling names like `CHECKLIST.md.bak.<timestamp>`.
+- `loop` stops early when stdout contains `<promise>COMPLETE</promise>`.
+- Optional desktop notifications use `tt notify` when `tt` exists.
+- Ralph is non-interactive by design.
