@@ -32,6 +32,7 @@ test-results/
 
 # Misc
 .agents/
+.specs/
 .DS_Store
 /.tmp
 /tmp
