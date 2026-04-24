@@ -22,6 +22,7 @@ const makeSharedFlags = () => ({
     Flag.optional,
   ),
   ralphDir: Flag.string("ralph-dir").pipe(
+    Flag.withAlias("d"),
     Flag.withDescription("Directory containing CHECKLIST.md, INSTRUCTIONS.md, and PROGRESS.md"),
     Flag.optional,
   ),

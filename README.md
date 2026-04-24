@@ -20,12 +20,12 @@ Main entrypoints:
 
 Pass either:
 
-- `--ralph-dir <directory>` with `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md`
+- `-d`, `--ralph-dir <directory>` with `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md`
 - all three explicit file flags: `--checklist`, `--instructions`, `--progress`
 
-Explicit file flags override `--ralph-dir` per file.
+Explicit file flags override `-d` / `--ralph-dir` per file.
 
-Relative paths passed with `init`, `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph` or `bun run cli` locally.
+Relative paths passed with `init`, `-d` / `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph` or `bun run cli` locally.
 
 The bundled `init` templates live in `src/templates/` inside this repo.
 
@@ -36,17 +36,17 @@ Codex runs in the launch directory by default. Use `--cwd <directory>` to run Co
 ```bash
 ralph init
 ralph init ./.ralph
-ralph once --ralph-dir ./.ralph
+ralph once -d ./.ralph
 ralph loop --ralph-dir ./.ralph -n 20
 ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
-ralph once --ralph-dir ./.ralph --cwd .
+ralph once -d ./.ralph --cwd .
 ```
 
 Local repo dev:
 
 ```bash
 bun run cli init
-bun run cli once --ralph-dir ./.ralph
+bun run cli once -d ./.ralph
 ```
 
 ## Flags
@@ -60,7 +60,7 @@ Shared flags on `once` and `loop`:
 - `-c`, `--checklist <path>`
 - `-i`, `--instructions <path>`
 - `-p`, `--progress <path>`
-- `--ralph-dir <directory>`
+- `-d`, `--ralph-dir <directory>`
 - `--cwd <directory>`
 - `--yolo`
 
@@ -125,7 +125,7 @@ Then run:
 
 ```bash
 ralph init
-ralph once --ralph-dir .
+ralph once -d .
 ```
 
 Local repo dev:
@@ -133,7 +133,7 @@ Local repo dev:
 ```bash
 bun install
 bun run cli init
-bun run cli once --ralph-dir .
+bun run cli once -d .
 ```
 
 ## Notes
