@@ -35,18 +35,18 @@ Codex runs in the launch directory by default. Use `--cwd <directory>` to run Co
 
 ```bash
 ralph init
-ralph init ./.ralph
-ralph once -d ./.ralph
-ralph loop --ralph-dir ./.ralph -n 20
-ralph once -c ./.ralph/CHECKLIST.md -p ./.ralph/PROGRESS.md -i ./.ralph/INSTRUCTIONS.md
-ralph once -d ./.ralph --cwd .
+ralph init .ralph
+ralph once -d .ralph
+ralph loop --ralph-dir .ralph -n 20
+ralph once -c .ralph/CHECKLIST.md -p .ralph/PROGRESS.md -i .ralph/INSTRUCTIONS.md
+ralph once -d .ralph --cwd .
 ```
 
 Local repo dev:
 
 ```bash
 bun run cli init
-bun run cli once -d ./.ralph
+bun run cli once -d .ralph
 ```
 
 ## Flags
