@@ -7,17 +7,26 @@ import {
   type RalphFilePaths,
   type SharedFlagsInput,
 } from "../domain/Ralph";
-import type { OnceSequenceInput, PreparedOnceSequence } from "../domain/WorkInvocation";
+import type {
+  OnceSequenceInput,
+  OptionalPhaseRole,
+  OptionalPhaseSnapshot,
+  PhaseRole,
+  PhaseSource,
+  PreparedOnceSequence,
+  ReadyPhaseSnapshot,
+} from "../domain/WorkInvocation";
 import {
   BlankWork,
   InvalidRalphDirectory,
   InvalidWorkingDirectory,
-  MissingWorkFile,
+  MissingPhaseFile,
   MissingWorkSource,
-  type WorkInputError,
-  WorkFileUnreadable,
-  WorkOutsideWorkingDirectory,
-  WorkPathNotFile,
+  type PhaseInputError,
+  PhaseFileUnreadable,
+  phaseInputLabel,
+  PhaseOutsideWorkingDirectory,
+  PhasePathNotFile,
 } from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
 import { failWithMessage } from "../errors/RalphExit";
@@ -45,7 +54,7 @@ export class RalphWorkspace extends Context.Service<
     prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
     prepareOnceSequence(
       input: OnceSequenceInput,
-    ): Effect.Effect<PreparedOnceSequence, WorkInputError>;
+    ): Effect.Effect<PreparedOnceSequence, PhaseInputError>;
   }
 >()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
@@ -369,121 +378,217 @@ export class RalphWorkspace extends Context.Service<
         );
       });
 
-      const resolveWorkPath = Effect.fnUntraced(function* (
-        input: OnceSequenceInput,
+      const phaseFileName = (role: PhaseRole): string => {
+        switch (role) {
+          case "BeforeWork":
+            return "BEFORE_WORK.md";
+          case "Work":
+            return "WORK.md";
+          case "AfterWork":
+            return "AFTER_WORK.md";
+        }
+      };
+
+      const resolveRalphDirectory = Effect.fnUntraced(function* (
+        input: Option.Option<string>,
         workingDirectory: string,
       ) {
-        if (Option.isSome(input.work)) {
-          return path.resolve(workingDirectory, input.work.value);
+        if (Option.isNone(input)) {
+          return undefined;
         }
 
-        if (Option.isNone(input.ralphDir)) {
-          return yield* new MissingWorkSource({
-            message:
-              "Work instructions are required. Pass --work/-w or --ralph-dir containing WORK.md.",
-          });
-        }
-
-        const ralphDirectory = path.resolve(workingDirectory, input.ralphDir.value);
-        const info = yield* fileSystem.stat(ralphDirectory).pipe(
+        const requestedPath = path.resolve(workingDirectory, input.value);
+        const info = yield* fileSystem.stat(requestedPath).pipe(
           Effect.mapError(
             () =>
               new InvalidRalphDirectory({
-                path: ralphDirectory,
-                message: `Ralph directory not found or inaccessible: ${ralphDirectory}`,
+                path: requestedPath,
+                message: `Ralph directory not found or inaccessible: ${requestedPath}`,
               }),
           ),
         );
 
         if (info.type !== "Directory") {
           return yield* new InvalidRalphDirectory({
-            path: ralphDirectory,
-            message: `Ralph directory is not a directory: ${ralphDirectory}`,
+            path: requestedPath,
+            message: `Ralph directory is not a directory: ${requestedPath}`,
           });
         }
 
-        return path.join(ralphDirectory, "WORK.md");
+        return requestedPath;
       });
 
-      const decodeUtf8 = Effect.fnUntraced(function* (filePath: string, bytes: Uint8Array) {
-        return yield* Effect.try({
-          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-          catch: () =>
-            new WorkFileUnreadable({
-              path: filePath,
-              message: `Work file is not readable UTF-8: ${filePath}`,
+      const resolvePhaseSource = <Role extends PhaseRole>(
+        role: Role,
+        explicitPath: Option.Option<string>,
+        ralphDirectory: string | undefined,
+        workingDirectory: string,
+      ): Option.Option<PhaseSource<Role>> =>
+        Option.match(explicitPath, {
+          onNone: () =>
+            ralphDirectory === undefined
+              ? Option.none()
+              : Option.some({
+                  origin: "RalphDirectory",
+                  role,
+                  path: path.join(ralphDirectory, phaseFileName(role)),
+                }),
+          onSome: (rawPath) =>
+            Option.some({
+              origin: "Explicit",
+              role,
+              path: path.resolve(workingDirectory, rawPath),
             }),
         });
-      });
 
-      const prepareOnceSequence = Effect.fnUntraced(function* (input: OnceSequenceInput) {
-        const workingDirectory = yield* canonicalWorkingDirectory(input.cwd);
-        const requestedWorkPath = yield* resolveWorkPath(input, workingDirectory);
-        const info = yield* fileSystem.stat(requestedWorkPath).pipe(
+      const readPhasePrompt = Effect.fnUntraced(function* (
+        source: PhaseSource,
+        workingDirectory: string,
+      ) {
+        const label = phaseInputLabel(source.role);
+        const info = yield* fileSystem.stat(source.path).pipe(
           Effect.mapError(
             () =>
-              new MissingWorkFile({
-                path: requestedWorkPath,
-                message: `Work file not found: ${requestedWorkPath}`,
+              new MissingPhaseFile({
+                role: source.role,
+                path: source.path,
+                message: `${label} file not found: ${source.path}`,
               }),
           ),
         );
 
         if (info.type !== "File") {
-          return yield* new WorkPathNotFile({
-            path: requestedWorkPath,
-            message: `Work path is not a regular file: ${requestedWorkPath}`,
+          return yield* new PhasePathNotFile({
+            role: source.role,
+            path: source.path,
+            message: `${label} path is not a regular file: ${source.path}`,
           });
         }
 
-        const canonicalWorkPath = yield* fileSystem.realPath(requestedWorkPath).pipe(
+        const canonicalPath = yield* fileSystem.realPath(source.path).pipe(
           Effect.mapError(
             () =>
-              new WorkFileUnreadable({
-                path: requestedWorkPath,
-                message: `Work file could not be resolved: ${requestedWorkPath}`,
+              new PhaseFileUnreadable({
+                role: source.role,
+                path: source.path,
+                message: `${label} file could not be resolved: ${source.path}`,
               }),
           ),
         );
-        const relativeWorkPath = path.relative(workingDirectory, canonicalWorkPath);
+        const relativePath = path.relative(workingDirectory, canonicalPath);
         const isContained =
-          relativeWorkPath !== ".." &&
-          !relativeWorkPath.startsWith(`..${path.sep}`) &&
-          !path.isAbsolute(relativeWorkPath);
+          relativePath !== ".." &&
+          !relativePath.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relativePath);
 
         if (!isContained) {
-          return yield* new WorkOutsideWorkingDirectory({
-            path: canonicalWorkPath,
+          return yield* new PhaseOutsideWorkingDirectory({
+            role: source.role,
+            path: canonicalPath,
             workingDirectory,
-            message: `Work file must be contained by working directory ${workingDirectory}: ${canonicalWorkPath}`,
+            message: `${label} file must be contained by working directory ${workingDirectory}: ${canonicalPath}`,
           });
         }
 
-        const bytes = yield* fileSystem.readFile(canonicalWorkPath).pipe(
+        const bytes = yield* fileSystem.readFile(canonicalPath).pipe(
           Effect.mapError(
             () =>
-              new WorkFileUnreadable({
-                path: canonicalWorkPath,
-                message: `Work file is not readable: ${canonicalWorkPath}`,
+              new PhaseFileUnreadable({
+                role: source.role,
+                path: canonicalPath,
+                message: `${label} file is not readable: ${canonicalPath}`,
               }),
           ),
         );
-        const prompt = yield* decodeUtf8(canonicalWorkPath, bytes);
 
-        if (prompt.trim().length === 0) {
-          return yield* new BlankWork({
-            path: canonicalWorkPath,
-            message: `Work instructions are required; work file is blank: ${canonicalWorkPath}`,
+        return yield* Effect.try({
+          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          catch: () =>
+            new PhaseFileUnreadable({
+              role: source.role,
+              path: canonicalPath,
+              message: `${label} file is not readable UTF-8: ${canonicalPath}`,
+            }),
+        });
+      });
+
+      const snapshotOptionalPhase = Effect.fnUntraced(function* <Role extends OptionalPhaseRole>(
+        role: Role,
+        sourceOption: Option.Option<PhaseSource<Role>>,
+        workingDirectory: string,
+      ): Effect.fn.Return<OptionalPhaseSnapshot<Role>, PhaseInputError> {
+        if (Option.isNone(sourceOption)) {
+          return { _tag: "Skipped", role, reason: "Missing" };
+        }
+
+        const source = sourceOption.value;
+        if (source.origin === "RalphDirectory") {
+          const exists = yield* fileSystem.exists(source.path).pipe(
+            Effect.mapError(
+              () =>
+                new PhaseFileUnreadable({
+                  role,
+                  path: source.path,
+                  message: `${phaseInputLabel(role)} file could not be accessed: ${source.path}`,
+                }),
+            ),
+          );
+          if (!exists) {
+            return { _tag: "Skipped", role, reason: "Missing" };
+          }
+        }
+
+        const prompt = yield* readPhasePrompt(source, workingDirectory);
+        return prompt.trim().length === 0
+          ? { _tag: "Skipped", role, reason: "Blank" }
+          : { _tag: "Ready", role, prompt };
+      });
+
+      const snapshotWorkPhase = Effect.fnUntraced(function* (
+        sourceOption: Option.Option<PhaseSource<"Work">>,
+        workingDirectory: string,
+      ): Effect.fn.Return<ReadyPhaseSnapshot<"Work">, PhaseInputError> {
+        if (Option.isNone(sourceOption)) {
+          return yield* new MissingWorkSource({
+            message:
+              "Work instructions are required. Pass --work/-w or --ralph-dir containing WORK.md.",
           });
         }
+
+        const prompt = yield* readPhasePrompt(sourceOption.value, workingDirectory);
+        if (prompt.trim().length === 0) {
+          return yield* new BlankWork({
+            path: sourceOption.value.path,
+            message: `Work instructions are required; work file is blank: ${sourceOption.value.path}`,
+          });
+        }
+
+        return { _tag: "Ready", role: "Work", prompt };
+      });
+
+      const prepareOnceSequence = Effect.fnUntraced(function* (input: OnceSequenceInput) {
+        const workingDirectory = yield* canonicalWorkingDirectory(input.cwd);
+        const ralphDirectory = yield* resolveRalphDirectory(input.ralphDir, workingDirectory);
+        const beforeSource = resolvePhaseSource(
+          "BeforeWork",
+          input.before,
+          ralphDirectory,
+          workingDirectory,
+        );
+        const workSource = resolvePhaseSource("Work", input.work, ralphDirectory, workingDirectory);
+        const afterSource = resolvePhaseSource(
+          "AfterWork",
+          input.after,
+          ralphDirectory,
+          workingDirectory,
+        );
+        const before = yield* snapshotOptionalPhase("BeforeWork", beforeSource, workingDirectory);
+        const work = yield* snapshotWorkPhase(workSource, workingDirectory);
+        const after = yield* snapshotOptionalPhase("AfterWork", afterSource, workingDirectory);
 
         return {
           workingDirectory,
-          phases: {
-            before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-            work: { _tag: "Ready", role: "Work", prompt },
-            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
-          },
+          phases: { before, work, after },
           timeouts: input.timeouts,
           yolo: input.yolo,
         } satisfies PreparedOnceSequence;

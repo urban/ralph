@@ -19,10 +19,17 @@ it.effect("once parses aliases, yolo, and compact timeout defaults before delega
       runOnce: (input) => Ref.set(captured, Option.some(input)),
     });
 
-    yield* runOnce(["-w", "./WORK.md", "-C", "./project", "--yolo"]).pipe(
-      Effect.provideService(RalphRunner, runner),
-      Effect.provide(BunServices.layer),
-    );
+    yield* runOnce([
+      "-b",
+      "./BEFORE.md",
+      "-w",
+      "./WORK.md",
+      "-a",
+      "./AFTER.md",
+      "-C",
+      "./project",
+      "--yolo",
+    ]).pipe(Effect.provideService(RalphRunner, runner), Effect.provide(BunServices.layer));
 
     const input = yield* Ref.get(captured);
     assert.isTrue(Option.isSome(input));
@@ -30,7 +37,9 @@ it.effect("once parses aliases, yolo, and compact timeout defaults before delega
       return;
     }
 
+    assert.deepStrictEqual(input.value.before, Option.some("./BEFORE.md"));
     assert.deepStrictEqual(input.value.work, Option.some("./WORK.md"));
+    assert.deepStrictEqual(input.value.after, Option.some("./AFTER.md"));
     assert.deepStrictEqual(input.value.cwd, Option.some("./project"));
     assert.isTrue(input.value.yolo);
     assert.strictEqual(input.value.idleTimeout, "5m");

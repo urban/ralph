@@ -39,7 +39,9 @@ const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlags
 });
 
 const makeOnceSequenceInput = (overrides: Partial<OnceSequenceInput> = {}): OnceSequenceInput => ({
+  before: Option.none(),
   work: Option.none(),
+  after: Option.none(),
   ralphDir: Option.none(),
   cwd: Option.none(),
   yolo: false,
@@ -259,7 +261,160 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         workspace.prepareOnceSequence(makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
       );
 
-      expect(prepared.phases.work.prompt).toBe("Run from directory.\n");
+      expect(prepared.phases).toEqual({
+        before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+        work: { _tag: "Ready", role: "Work", prompt: "Run from directory.\n" },
+        after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+      });
+    }),
+  );
+
+  it.effect("uses cwd-relative explicit phases over directory phases", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const ralphDirectory = join(projectDirectory, ".ralph");
+
+      yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        join(ralphDirectory, "BEFORE_WORK.md"),
+        "Directory before.\n",
+      );
+      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Directory work.\n");
+      yield* fileSystem.writeFileString(
+        join(ralphDirectory, "AFTER_WORK.md"),
+        "Directory after.\n",
+      );
+      yield* fileSystem.writeFileString(join(projectDirectory, "DISABLED_BEFORE.md"), " \n");
+      yield* fileSystem.writeFileString(join(projectDirectory, "CUSTOM_WORK.md"), "Custom work.\n");
+
+      const prepared = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareOnceSequence(
+          makeOnceSequenceInput({
+            before: Option.some("./DISABLED_BEFORE.md"),
+            work: Option.some("./CUSTOM_WORK.md"),
+            ralphDir: Option.some("./.ralph"),
+            cwd: Option.some("./project"),
+          }),
+        ),
+      );
+
+      expect(prepared.phases).toEqual({
+        before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
+        work: { _tag: "Ready", role: "Work", prompt: "Custom work.\n" },
+        after: { _tag: "Ready", role: "AfterWork", prompt: "Directory after.\n" },
+      });
+    }),
+  );
+
+  it.effect("fails when an explicit optional phase is missing", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+
+      yield* fileSystem.writeFileString(join(tempDirectory, "WORK.md"), "Required work.\n");
+      const error = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
+              before: Option.some("./missing-before.md"),
+              work: Option.some("./WORK.md"),
+            }),
+          ),
+        ),
+      );
+
+      expect(error._tag).toBe("MissingPhaseFile");
+      if (error._tag === "MissingPhaseFile") {
+        expect(error.role).toBe("BeforeWork");
+      }
+    }),
+  );
+
+  it.effect("keeps explicit and directory phase paths inside cwd", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const ralphDirectory = join(projectDirectory, ".ralph");
+      const outsideBefore = join(tempDirectory, "outside-before.md");
+      const outsideAfter = join(tempDirectory, "outside-after.md");
+
+      yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Required work.\n");
+      yield* fileSystem.writeFileString(outsideBefore, "Outside before.\n");
+      yield* fileSystem.writeFileString(outsideAfter, "Outside after.\n");
+      yield* fileSystem.symlink(outsideBefore, join(ralphDirectory, "BEFORE_WORK.md"));
+
+      const inferred = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
+              cwd: Option.some("./project"),
+              ralphDir: Option.some("./.ralph"),
+            }),
+          ),
+        ),
+      );
+      const explicit = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
+              cwd: Option.some("./project"),
+              work: Option.some("./.ralph/WORK.md"),
+              after: Option.some("../outside-after.md"),
+            }),
+          ),
+        ),
+      );
+
+      expect(inferred._tag).toBe("PhaseOutsideWorkingDirectory");
+      if (inferred._tag === "PhaseOutsideWorkingDirectory") {
+        expect(inferred.role).toBe("BeforeWork");
+      }
+      expect(explicit._tag).toBe("PhaseOutsideWorkingDirectory");
+      if (explicit._tag === "PhaseOutsideWorkingDirectory") {
+        expect(explicit.role).toBe("AfterWork");
+      }
+    }),
+  );
+
+  it.effect("rejects missing and blank inferred work", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const ralphDirectory = join(tempDirectory, ".ralph");
+
+      yield* fileSystem.makeDirectory(ralphDirectory);
+      const missing = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") }),
+          ),
+        ),
+      );
+      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), " \n");
+      const blank = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") }),
+          ),
+        ),
+      );
+
+      expect(missing._tag).toBe("MissingPhaseFile");
+      expect(blank._tag).toBe("BlankWork");
     }),
   );
 
@@ -328,8 +483,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         ),
       );
 
-      expect(missing._tag).toBe("MissingWorkFile");
-      expect(nonFile._tag).toBe("WorkPathNotFile");
+      expect(missing._tag).toBe("MissingPhaseFile");
+      expect(nonFile._tag).toBe("PhasePathNotFile");
     }),
   );
 
@@ -357,7 +512,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         ),
       );
 
-      expect(unreadable._tag).toBe("WorkFileUnreadable");
+      expect(unreadable._tag).toBe("PhaseFileUnreadable");
       expect(blank._tag).toBe("BlankWork");
     }),
   );
@@ -398,8 +553,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         ),
       );
 
-      expect(outside._tag).toBe("WorkOutsideWorkingDirectory");
-      expect(sibling._tag).toBe("WorkOutsideWorkingDirectory");
+      expect(outside._tag).toBe("PhaseOutsideWorkingDirectory");
+      expect(sibling._tag).toBe("PhaseOutsideWorkingDirectory");
     }),
   );
 
@@ -427,7 +582,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         ),
       );
 
-      expect(error._tag).toBe("WorkOutsideWorkingDirectory");
+      expect(error._tag).toBe("PhaseOutsideWorkingDirectory");
     }),
   );
 });

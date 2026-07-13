@@ -21,7 +21,9 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const input = (overrides: Partial<OnceFlagsInput> = {}): OnceFlagsInput => ({
+  before: Option.none(),
   work: Option.some("./WORK.md"),
+  after: Option.none(),
   ralphDir: Option.none(),
   cwd: Option.none(),
   idleTimeout: "5m",

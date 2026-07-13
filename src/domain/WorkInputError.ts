@@ -1,6 +1,9 @@
 import { Schema } from "effect";
 
+import { PhaseRole } from "./WorkInvocation";
+
 const PathField = { path: Schema.String, message: Schema.String };
+const PhasePathField = { role: PhaseRole, ...PathField };
 
 export class MissingWorkSource extends Schema.TaggedErrorClass<MissingWorkSource>()(
   "MissingWorkSource",
@@ -17,38 +20,50 @@ export class InvalidRalphDirectory extends Schema.TaggedErrorClass<InvalidRalphD
   PathField,
 ) {}
 
-export class MissingWorkFile extends Schema.TaggedErrorClass<MissingWorkFile>()(
-  "MissingWorkFile",
-  PathField,
+export class MissingPhaseFile extends Schema.TaggedErrorClass<MissingPhaseFile>()(
+  "MissingPhaseFile",
+  PhasePathField,
 ) {}
 
-export class WorkPathNotFile extends Schema.TaggedErrorClass<WorkPathNotFile>()(
-  "WorkPathNotFile",
-  PathField,
+export class PhasePathNotFile extends Schema.TaggedErrorClass<PhasePathNotFile>()(
+  "PhasePathNotFile",
+  PhasePathField,
 ) {}
 
-export class WorkFileUnreadable extends Schema.TaggedErrorClass<WorkFileUnreadable>()(
-  "WorkFileUnreadable",
-  PathField,
+export class PhaseFileUnreadable extends Schema.TaggedErrorClass<PhaseFileUnreadable>()(
+  "PhaseFileUnreadable",
+  PhasePathField,
 ) {}
 
 export class BlankWork extends Schema.TaggedErrorClass<BlankWork>()("BlankWork", PathField) {}
 
-export class WorkOutsideWorkingDirectory extends Schema.TaggedErrorClass<WorkOutsideWorkingDirectory>()(
-  "WorkOutsideWorkingDirectory",
+export class PhaseOutsideWorkingDirectory extends Schema.TaggedErrorClass<PhaseOutsideWorkingDirectory>()(
+  "PhaseOutsideWorkingDirectory",
   {
+    role: PhaseRole,
     path: Schema.String,
     workingDirectory: Schema.String,
     message: Schema.String,
   },
 ) {}
 
-export type WorkInputError =
+export type PhaseInputError =
   | MissingWorkSource
   | InvalidWorkingDirectory
   | InvalidRalphDirectory
-  | MissingWorkFile
-  | WorkPathNotFile
-  | WorkFileUnreadable
+  | MissingPhaseFile
+  | PhasePathNotFile
+  | PhaseFileUnreadable
   | BlankWork
-  | WorkOutsideWorkingDirectory;
+  | PhaseOutsideWorkingDirectory;
+
+export const phaseInputLabel = (role: PhaseRole): string => {
+  switch (role) {
+    case "BeforeWork":
+      return "Before-work";
+    case "Work":
+      return "Work";
+    case "AfterWork":
+      return "After-work";
+  }
+};

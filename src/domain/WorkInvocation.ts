@@ -36,7 +36,9 @@ export interface TimeoutPolicy {
 }
 
 export interface OnceFlagsInput {
+  readonly before: Option.Option<string>;
   readonly work: Option.Option<string>;
+  readonly after: Option.Option<string>;
   readonly ralphDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
   readonly idleTimeout: string;
@@ -45,14 +47,19 @@ export interface OnceFlagsInput {
 }
 
 export interface OnceSequenceInput {
+  readonly before: Option.Option<string>;
   readonly work: Option.Option<string>;
+  readonly after: Option.Option<string>;
   readonly ralphDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
   readonly yolo: boolean;
   readonly timeouts: TimeoutPolicy;
 }
 
-export type PhaseRole = "BeforeWork" | "Work" | "AfterWork";
+export const PhaseRole = Schema.Literals(["BeforeWork", "Work", "AfterWork"]).annotate({
+  identifier: "PhaseRole",
+});
+export type PhaseRole = typeof PhaseRole.Type;
 export type OptionalPhaseRole = Exclude<PhaseRole, "Work">;
 
 export type PhaseSource<Role extends PhaseRole = PhaseRole> =

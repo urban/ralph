@@ -10,7 +10,7 @@ import type {
   TimeoutInputError,
 } from "../domain/WorkInvocation";
 import { type CodexInvocationError, OperatorOutputError } from "../domain/WorkInvocation";
-import type { WorkInputError } from "../domain/WorkInputError";
+import type { PhaseInputError } from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
 import { decodeTimeoutPolicy } from "../domain/WorkInvocation";
 import { CodexRunner } from "./CodexRunner";
@@ -19,7 +19,7 @@ import { RalphWorkspace } from "./RalphWorkspace";
 
 export type RunOnceError =
   | TimeoutInputError
-  | WorkInputError
+  | PhaseInputError
   | RalphExit
   | CodexInvocationError
   | OperatorOutputError;
@@ -111,7 +111,9 @@ export class RalphRunner extends Context.Service<
         const execution = Effect.gen(function* () {
           const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
           const prepared = yield* workspace.prepareOnceSequence({
+            before: input.before,
             work: input.work,
+            after: input.after,
             ralphDir: input.ralphDir,
             cwd: input.cwd,
             yolo: input.yolo,
