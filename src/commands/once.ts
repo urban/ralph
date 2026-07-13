@@ -1,19 +1,62 @@
 import { Effect } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command, Flag } from "effect/unstable/cli";
 
-import type { SharedFlagsInput } from "../domain/Ralph";
-import { CodexRunner } from "../services/CodexRunner";
-import { makeSharedFlags, prepareCodexRunContext } from "./shared";
+import { decodeTimeoutPolicy, type OnceFlagsInput } from "../domain/WorkInvocation";
+import { failWithMessage } from "../errors/RalphExit";
+import { HostTools } from "../services/HostTools";
+import { RalphWorkspace } from "../services/RalphWorkspace";
 
-const handler = Effect.fn("commandOnce.handler")(function* (input: SharedFlagsInput) {
-  const codexRunner = yield* CodexRunner;
-  const runContext = yield* prepareCodexRunContext(input);
+const onceFlags = {
+  work: Flag.string("work").pipe(
+    Flag.withAlias("w"),
+    Flag.withDescription("Work instruction file"),
+    Flag.optional,
+  ),
+  ralphDir: Flag.string("ralph-dir").pipe(
+    Flag.withAlias("d"),
+    Flag.withDescription("Directory containing WORK.md"),
+    Flag.optional,
+  ),
+  cwd: Flag.string("cwd").pipe(
+    Flag.withAlias("C"),
+    Flag.withDescription("Working directory for codex exec"),
+    Flag.optional,
+  ),
+  idleTimeout: Flag.string("idle-timeout").pipe(
+    Flag.withDescription("Maximum inactivity duration"),
+    Flag.withDefault("5m"),
+  ),
+  invocationTimeout: Flag.string("invocation-timeout").pipe(
+    Flag.withDescription("Maximum invocation duration"),
+    Flag.withDefault("30m"),
+  ),
+  yolo: Flag.boolean("yolo").pipe(
+    Flag.withDescription("Use --dangerously-bypass-approvals-and-sandbox"),
+  ),
+};
 
-  yield* codexRunner.run(runContext);
+const handler = Effect.fn("commandOnce.handler")(function* (input: OnceFlagsInput) {
+  const hostTools = yield* HostTools;
+  const ralphWorkspace = yield* RalphWorkspace;
+  const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout).pipe(
+    Effect.catch((error) => failWithMessage(error.message)),
+  );
+
+  yield* ralphWorkspace
+    .prepareWorkInvocation({
+      work: input.work,
+      ralphDir: input.ralphDir,
+      cwd: input.cwd,
+      yolo: input.yolo,
+      timeouts,
+    })
+    .pipe(Effect.catch((error) => failWithMessage(error.message)));
+
+  yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
 });
 
-const commandOnce = Command.make("once", makeSharedFlags(), handler).pipe(
-  Command.withDescription("Run one Codex pass"),
+const commandOnce = Command.make("once", onceFlags, handler).pipe(
+  Command.withDescription("Run one supervised work invocation"),
 );
 
-export { commandOnce };
+export { commandOnce, onceFlags };

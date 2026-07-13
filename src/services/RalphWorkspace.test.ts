@@ -1,9 +1,10 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { expect, layer } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import { join } from "node:path";
 
 import type { SharedFlagsInput } from "../domain/Ralph";
+import type { WorkInvocationInput } from "../domain/WorkInvocation";
 import { RalphWorkspace } from "./RalphWorkspace";
 
 const workspaceLayer = RalphWorkspace.layer.pipe(Layer.provideMerge(BunServices.layer));
@@ -34,6 +35,18 @@ const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlags
   ralphDir: Option.none(),
   cwd: Option.none(),
   yolo: false,
+  ...overrides,
+});
+
+const makeWorkInput = (overrides: Partial<WorkInvocationInput> = {}): WorkInvocationInput => ({
+  work: Option.none(),
+  ralphDir: Option.none(),
+  cwd: Option.none(),
+  yolo: false,
+  timeouts: {
+    idle: Duration.minutes(5),
+    invocation: Duration.minutes(30),
+  },
   ...overrides,
 });
 
@@ -191,6 +204,217 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         result,
         "Missing Ralph runtime inputs: --checklist, --instructions, --progress. Pass --ralph-dir or all of --checklist, --instructions, and --progress.",
       );
+    }),
+  );
+
+  it.effect("prepares a contained immutable work snapshot relative to resolved cwd", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const workPath = join(projectDirectory, "WORK.md");
+
+      yield* fileSystem.makeDirectory(projectDirectory);
+      yield* fileSystem.writeFileString(workPath, "Do the approved work.\n");
+
+      const prepared = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareWorkInvocation(
+          makeWorkInput({
+            cwd: Option.some("./project"),
+            work: Option.some("./WORK.md"),
+            yolo: true,
+          }),
+        ),
+      );
+      yield* fileSystem.writeFileString(workPath, "Changed after preparation.\n");
+
+      expect(prepared.workingDirectory).toBe(yield* fileSystem.realPath(projectDirectory));
+      expect(prepared.work).toEqual({
+        _tag: "Ready",
+        role: "Work",
+        prompt: "Do the approved work.\n",
+      });
+      expect(prepared.yolo).toBe(true);
+    }),
+  );
+
+  it.effect("accepts WORK.md from a valid runtime directory source", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const ralphDirectory = join(tempDirectory, ".ralph");
+
+      yield* fileSystem.makeDirectory(ralphDirectory);
+      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Run from directory.\n");
+
+      const prepared = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareWorkInvocation(makeWorkInput({ ralphDir: Option.some("./.ralph") })),
+      );
+
+      expect(prepared.work.prompt).toBe("Run from directory.\n");
+    }),
+  );
+
+  it.effect("rejects missing and invalid runtime work sources", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const tempDirectory = yield* makeTempDirectory();
+      const missing = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(workspace.prepareWorkInvocation(makeWorkInput())),
+      );
+      const invalidDirectory = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(
+            makeWorkInput({ ralphDir: Option.some("./missing-ralph") }),
+          ),
+        ),
+      );
+
+      expect(missing._tag).toBe("MissingWorkSource");
+      expect(invalidDirectory._tag).toBe("InvalidRalphDirectory");
+    }),
+  );
+
+  it.effect("rejects an invalid cwd before resolving work", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const tempDirectory = yield* makeTempDirectory();
+      const error = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(
+            makeWorkInput({ cwd: Option.some("./missing"), work: Option.some("WORK.md") }),
+          ),
+        ),
+      );
+
+      expect(error._tag).toBe("InvalidWorkingDirectory");
+    }),
+  );
+
+  it.effect("rejects missing and non-file work paths", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const directoryPath = join(tempDirectory, "work-directory");
+
+      yield* fileSystem.makeDirectory(directoryPath);
+
+      const missing = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./missing.md") })),
+        ),
+      );
+      const nonFile = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./work-directory") })),
+        ),
+      );
+
+      expect(missing._tag).toBe("MissingWorkFile");
+      expect(nonFile._tag).toBe("WorkPathNotFile");
+    }),
+  );
+
+  it.effect("rejects unreadable UTF-8 and blank work", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+
+      yield* fileSystem.writeFile(join(tempDirectory, "invalid.md"), new Uint8Array([255]));
+      yield* fileSystem.writeFileString(join(tempDirectory, "blank.md"), " \n\t");
+
+      const unreadable = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./invalid.md") })),
+        ),
+      );
+      const blank = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./blank.md") })),
+        ),
+      );
+
+      expect(unreadable._tag).toBe("WorkFileUnreadable");
+      expect(blank._tag).toBe("BlankWork");
+    }),
+  );
+
+  it.effect("rejects outside-cwd and sibling-prefix work paths", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const siblingDirectory = join(tempDirectory, "project-sibling");
+
+      yield* fileSystem.makeDirectory(projectDirectory);
+      yield* fileSystem.makeDirectory(siblingDirectory);
+      yield* fileSystem.writeFileString(join(tempDirectory, "outside.md"), "outside\n");
+      yield* fileSystem.writeFileString(join(siblingDirectory, "WORK.md"), "sibling\n");
+
+      const outside = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(
+            makeWorkInput({
+              cwd: Option.some("./project"),
+              work: Option.some("../outside.md"),
+            }),
+          ),
+        ),
+      );
+      const sibling = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(
+            makeWorkInput({
+              cwd: Option.some("./project"),
+              work: Option.some("../project-sibling/WORK.md"),
+            }),
+          ),
+        ),
+      );
+
+      expect(outside._tag).toBe("WorkOutsideWorkingDirectory");
+      expect(sibling._tag).toBe("WorkOutsideWorkingDirectory");
+    }),
+  );
+
+  it.effect("rejects a symlink escape from cwd", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const outsideWorkPath = join(tempDirectory, "outside.md");
+
+      yield* fileSystem.makeDirectory(projectDirectory);
+      yield* fileSystem.writeFileString(outsideWorkPath, "outside\n");
+      yield* fileSystem.symlink(outsideWorkPath, join(projectDirectory, "WORK.md"));
+
+      const error = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          workspace.prepareWorkInvocation(
+            makeWorkInput({ cwd: Option.some("./project"), work: Option.some("./WORK.md") }),
+          ),
+        ),
+      );
+
+      expect(error._tag).toBe("WorkOutsideWorkingDirectory");
     }),
   );
 });

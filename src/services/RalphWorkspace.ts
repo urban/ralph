@@ -7,6 +7,18 @@ import {
   type RalphFilePaths,
   type SharedFlagsInput,
 } from "../domain/Ralph";
+import type { PreparedWorkInvocation, WorkInvocationInput } from "../domain/WorkInvocation";
+import {
+  BlankWork,
+  InvalidRalphDirectory,
+  InvalidWorkingDirectory,
+  MissingWorkFile,
+  MissingWorkSource,
+  type WorkInputError,
+  WorkFileUnreadable,
+  WorkOutsideWorkingDirectory,
+  WorkPathNotFile,
+} from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
 import { failWithMessage } from "../errors/RalphExit";
 
@@ -31,6 +43,9 @@ export class RalphWorkspace extends Context.Service<
   {
     init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>;
     prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
+    prepareWorkInvocation(
+      input: WorkInvocationInput,
+    ): Effect.Effect<PreparedWorkInvocation, WorkInputError>;
   }
 >()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
@@ -321,9 +336,159 @@ export class RalphWorkspace extends Context.Service<
         } satisfies PreparedRunContext;
       });
 
+      const canonicalWorkingDirectory = Effect.fnUntraced(function* (input: Option.Option<string>) {
+        const requestedPath = Option.match(input, {
+          onNone: () => path.resolve("."),
+          onSome: resolveFromLaunchDirectory,
+        });
+        const info = yield* fileSystem.stat(requestedPath).pipe(
+          Effect.mapError(
+            () =>
+              new InvalidWorkingDirectory({
+                path: requestedPath,
+                message: `Working directory not found or inaccessible: ${requestedPath}`,
+              }),
+          ),
+        );
+
+        if (info.type !== "Directory") {
+          return yield* new InvalidWorkingDirectory({
+            path: requestedPath,
+            message: `Working directory is not a directory: ${requestedPath}`,
+          });
+        }
+
+        return yield* fileSystem.realPath(requestedPath).pipe(
+          Effect.mapError(
+            () =>
+              new InvalidWorkingDirectory({
+                path: requestedPath,
+                message: `Working directory could not be resolved: ${requestedPath}`,
+              }),
+          ),
+        );
+      });
+
+      const resolveWorkPath = Effect.fnUntraced(function* (
+        input: WorkInvocationInput,
+        workingDirectory: string,
+      ) {
+        if (Option.isSome(input.work)) {
+          return path.resolve(workingDirectory, input.work.value);
+        }
+
+        if (Option.isNone(input.ralphDir)) {
+          return yield* new MissingWorkSource({
+            message:
+              "Work instructions are required. Pass --work/-w or --ralph-dir containing WORK.md.",
+          });
+        }
+
+        const ralphDirectory = path.resolve(workingDirectory, input.ralphDir.value);
+        const info = yield* fileSystem.stat(ralphDirectory).pipe(
+          Effect.mapError(
+            () =>
+              new InvalidRalphDirectory({
+                path: ralphDirectory,
+                message: `Ralph directory not found or inaccessible: ${ralphDirectory}`,
+              }),
+          ),
+        );
+
+        if (info.type !== "Directory") {
+          return yield* new InvalidRalphDirectory({
+            path: ralphDirectory,
+            message: `Ralph directory is not a directory: ${ralphDirectory}`,
+          });
+        }
+
+        return path.join(ralphDirectory, "WORK.md");
+      });
+
+      const decodeUtf8 = Effect.fnUntraced(function* (filePath: string, bytes: Uint8Array) {
+        return yield* Effect.try({
+          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          catch: () =>
+            new WorkFileUnreadable({
+              path: filePath,
+              message: `Work file is not readable UTF-8: ${filePath}`,
+            }),
+        });
+      });
+
+      const prepareWorkInvocation = Effect.fnUntraced(function* (input: WorkInvocationInput) {
+        const workingDirectory = yield* canonicalWorkingDirectory(input.cwd);
+        const requestedWorkPath = yield* resolveWorkPath(input, workingDirectory);
+        const info = yield* fileSystem.stat(requestedWorkPath).pipe(
+          Effect.mapError(
+            () =>
+              new MissingWorkFile({
+                path: requestedWorkPath,
+                message: `Work file not found: ${requestedWorkPath}`,
+              }),
+          ),
+        );
+
+        if (info.type !== "File") {
+          return yield* new WorkPathNotFile({
+            path: requestedWorkPath,
+            message: `Work path is not a regular file: ${requestedWorkPath}`,
+          });
+        }
+
+        const canonicalWorkPath = yield* fileSystem.realPath(requestedWorkPath).pipe(
+          Effect.mapError(
+            () =>
+              new WorkFileUnreadable({
+                path: requestedWorkPath,
+                message: `Work file could not be resolved: ${requestedWorkPath}`,
+              }),
+          ),
+        );
+        const relativeWorkPath = path.relative(workingDirectory, canonicalWorkPath);
+        const isContained =
+          relativeWorkPath !== ".." &&
+          !relativeWorkPath.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(relativeWorkPath);
+
+        if (!isContained) {
+          return yield* new WorkOutsideWorkingDirectory({
+            path: canonicalWorkPath,
+            workingDirectory,
+            message: `Work file must be contained by working directory ${workingDirectory}: ${canonicalWorkPath}`,
+          });
+        }
+
+        const bytes = yield* fileSystem.readFile(canonicalWorkPath).pipe(
+          Effect.mapError(
+            () =>
+              new WorkFileUnreadable({
+                path: canonicalWorkPath,
+                message: `Work file is not readable: ${canonicalWorkPath}`,
+              }),
+          ),
+        );
+        const prompt = yield* decodeUtf8(canonicalWorkPath, bytes);
+
+        if (prompt.trim().length === 0) {
+          return yield* new BlankWork({
+            path: canonicalWorkPath,
+            message: `Work instructions are required; work file is blank: ${canonicalWorkPath}`,
+          });
+        }
+
+        return {
+          workingDirectory,
+          work: { _tag: "Ready", role: "Work", prompt },
+          timeouts: input.timeouts,
+          yolo: input.yolo,
+        } satisfies PreparedWorkInvocation;
+      });
+
       return RalphWorkspace.of({
         init,
         prepareRunContext,
+        prepareWorkInvocation,
       });
     }),
   );
