@@ -151,7 +151,11 @@ export class CodexRunner extends Context.Service<
           onNone: () => Effect.die("Validated invocation timeout must be finite"),
           onSome: Effect.succeed,
         });
-        const terminate = handle.kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" }).pipe(
+        const terminate = handle.kill({ killSignal: "SIGTERM" }).pipe(
+          Effect.timeoutOrElse({
+            duration: "5 seconds",
+            orElse: () => handle.kill({ killSignal: "SIGKILL" }),
+          }),
           Effect.mapError(
             (error) =>
               new CodexTerminationError({

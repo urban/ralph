@@ -6,6 +6,8 @@
     "ralph": "./src/cli.ts"
   },
   "files": [
+    "README.md",
+    "examples/checklist-workflow/*.md",
     "src/**/*.ts",
     "src/templates/*.md"
   ],

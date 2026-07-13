@@ -25,6 +25,8 @@ const makeCustomHarness = Effect.fnUntraced(function* (
   stdout: Stream.Stream<Uint8Array>,
   stderr: Stream.Stream<Uint8Array>,
   exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>,
+  killBehavior: (options: ChildProcess.KillOptions | undefined) => Effect.Effect<void> = () =>
+    Effect.void,
 ) {
   const stdoutOutput = yield* Ref.make<Array<Uint8Array>>([]);
   const stderrOutput = yield* Ref.make<Array<Uint8Array>>([]);
@@ -55,7 +57,10 @@ const makeCustomHarness = Effect.fnUntraced(function* (
     all: Stream.empty,
     exitCode,
     isRunning: Effect.succeed(false),
-    kill: (options) => Ref.update(killRequests, (requests) => [...requests, options]),
+    kill: (options) =>
+      Ref.update(killRequests, (requests) => [...requests, options]).pipe(
+        Effect.andThen(killBehavior(options)),
+      ),
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
@@ -245,9 +250,7 @@ describe("CodexRunner.runInvocation", () => {
       const error = yield* Effect.flip(Fiber.join(fiber));
 
       assert.strictEqual(error._tag, "IdleInvocationTimeout");
-      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [
-        { killSignal: "SIGTERM", forceKillAfter: "5 seconds" },
-      ]);
+      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [{ killSignal: "SIGTERM" }]);
       assert.strictEqual(yield* Ref.get(harness.streamConsumersClosed), 2);
       assert.isTrue(yield* Ref.get(harness.scopeClosed));
     }),
@@ -276,11 +279,43 @@ describe("CodexRunner.runInvocation", () => {
       const error = yield* Effect.flip(Fiber.join(fiber));
 
       assert.strictEqual(error._tag, "AbsoluteInvocationTimeout");
-      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [
-        { killSignal: "SIGTERM", forceKillAfter: "5 seconds" },
-      ]);
+      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [{ killSignal: "SIGTERM" }]);
       assert.strictEqual(yield* Ref.get(harness.streamConsumersClosed), 2);
       assert.isTrue(yield* Ref.get(harness.scopeClosed));
+    }),
+  );
+
+  it.effect("escalates from graceful to forced process-group termination", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeCustomHarness(
+        Stream.never,
+        Stream.never,
+        Effect.never,
+        (options) => (options?.killSignal === "SIGTERM" ? Effect.never : Effect.void),
+      );
+      const invocation = provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* runner.runInvocation({
+            ...request(),
+            timeouts: { idle: Duration.seconds(1), invocation: Duration.seconds(30) },
+          });
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+      const fiber = yield* invocation.pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.isUndefined(fiber.pollUnsafe());
+      yield* TestClock.adjust(Duration.seconds(5));
+      const error = yield* Effect.flip(Fiber.join(fiber));
+
+      assert.strictEqual(error._tag, "IdleInvocationTimeout");
+      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [
+        { killSignal: "SIGTERM" },
+        { killSignal: "SIGKILL" },
+      ]);
     }),
   );
 
