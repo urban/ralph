@@ -27,6 +27,16 @@ describe("completion marker scanning", () => {
     }
   });
 
+  it("detects exact markers in either order", () => {
+    const invocationFirst = scanChunks([invocationCompletionMarker, workflowCompletionMarker]);
+    const workflowFirst = scanChunks([workflowCompletionMarker, invocationCompletionMarker]);
+
+    assert.isTrue(invocationFirst.invocationComplete);
+    assert.isTrue(invocationFirst.workflowComplete);
+    assert.isTrue(workflowFirst.invocationComplete);
+    assert.isTrue(workflowFirst.workflowComplete);
+  });
+
   it("rejects case and formatting variants", () => {
     const state = scanChunks([
       "<promise>invocation_complete</promise>",

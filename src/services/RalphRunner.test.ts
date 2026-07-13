@@ -203,7 +203,58 @@ describe("RalphRunner.runOnce", () => {
       assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), ["Do one thing."]);
       assert.strictEqual(
         yield* readOutput(harness.output),
-        "=== Work ===\n--- Work invocation complete in 0 ---\n",
+        "--- Before work phase skipped (blank) ---\n" +
+          "=== Work ===\n" +
+          "--- Work invocation complete in 0 ---\n" +
+          "--- After work phase skipped (missing) ---\n",
+      );
+    }),
+  );
+
+  it.effect("stops successfully when any phase completes the workflow", () =>
+    Effect.gen(function* () {
+      const scenarios: ReadonlyArray<{
+        readonly completingPrompt: string;
+        readonly expectedPrompts: ReadonlyArray<string>;
+      }> = [
+        {
+          completingPrompt: "Prepare the work.",
+          expectedPrompts: ["Prepare the work."],
+        },
+        {
+          completingPrompt: "Do the work.",
+          expectedPrompts: ["Prepare the work.", "Do the work."],
+        },
+        {
+          completingPrompt: "Verify the work.",
+          expectedPrompts: ["Prepare the work.", "Do the work.", "Verify the work."],
+        },
+      ];
+
+      yield* Effect.forEach(
+        scenarios,
+        (scenario) =>
+          Effect.gen(function* () {
+            const harness = yield* makeHarness(
+              (request) =>
+                Effect.succeed({
+                  invocationComplete: true,
+                  workflowComplete: request.prompt === scenario.completingPrompt,
+                }),
+              { snapshot: explicitThreePhaseSnapshot },
+            );
+
+            yield* harness.run(input());
+
+            assert.deepStrictEqual(
+              yield* Ref.get(harness.invocationCalls),
+              scenario.expectedPrompts,
+            );
+            assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+              "Ralph once succeeded: workflow complete.",
+            ]);
+          }),
+        { discard: true },
       );
     }),
   );

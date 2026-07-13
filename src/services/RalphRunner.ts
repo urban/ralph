@@ -3,6 +3,7 @@ import { Clock, Context, Duration, Effect, Layer, Result, Stdio, Stream } from "
 import type {
   InvocationOutcome,
   InvocationRequest,
+  IterationSnapshot,
   OnceFlagsInput,
   PhaseRole,
   PhaseSnapshot,
@@ -78,11 +79,14 @@ export class RalphRunner extends Context.Service<
         prepared: PreparedWorkflow,
         phase: PhaseSnapshot,
       ) {
+        const label = phaseLabel(phase.role);
         if (phase._tag === "Skipped") {
+          yield* writeOperatorOutput(
+            `--- ${label} phase skipped (${phase.reason.toLowerCase()}) ---\n`,
+          );
           return false;
         }
 
-        const label = phaseLabel(phase.role);
         yield* writeOperatorOutput(`=== ${label} ===\n`);
 
         const startedAt = yield* Clock.currentTimeNanos;
@@ -107,6 +111,23 @@ export class RalphRunner extends Context.Service<
         return yield* invocation.failure;
       });
 
+      const runSequence = Effect.fnUntraced(function* (
+        prepared: PreparedWorkflow,
+        snapshot: IterationSnapshot,
+      ) {
+        const beforeComplete = yield* runPhase(prepared, snapshot.before);
+        if (beforeComplete) {
+          return true;
+        }
+
+        const workComplete = yield* runPhase(prepared, snapshot.work);
+        if (workComplete) {
+          return true;
+        }
+
+        return yield* runPhase(prepared, snapshot.after);
+      });
+
       const runOnce = Effect.fn("RalphRunner.runOnce")(function* (input: OnceFlagsInput) {
         const execution = Effect.gen(function* () {
           const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
@@ -122,14 +143,11 @@ export class RalphRunner extends Context.Service<
 
           const snapshot = yield* workspace.snapshotIteration(prepared);
           yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
-          const workflowCompletions = yield* Effect.forEach(
-            [snapshot.before, snapshot.work, snapshot.after],
-            (phase) => runPhase(prepared, phase),
-          );
+          const workflowComplete = yield* runSequence(prepared, snapshot);
 
           return {
             invocationComplete: true,
-            workflowComplete: workflowCompletions.some((completed) => completed),
+            workflowComplete,
           } satisfies InvocationOutcome;
         });
         const result = yield* execution.pipe(Effect.result);
