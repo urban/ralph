@@ -65,6 +65,45 @@ export interface PreparedWorkInvocation {
   readonly yolo: boolean;
 }
 
+export interface InvocationOutcome {
+  readonly invocationComplete: true;
+  readonly workflowComplete: boolean;
+}
+
+export class CodexSpawnError extends Schema.TaggedErrorClass<CodexSpawnError>()("CodexSpawnError", {
+  message: Schema.String,
+}) {}
+
+export class CodexStreamError extends Schema.TaggedErrorClass<CodexStreamError>()(
+  "CodexStreamError",
+  {
+    stream: Schema.Literals(["Stdout", "Stderr"]),
+    message: Schema.String,
+  },
+) {}
+
+export class CodexExitStatusError extends Schema.TaggedErrorClass<CodexExitStatusError>()(
+  "CodexExitStatusError",
+  { message: Schema.String },
+) {}
+
+export class CodexExitError extends Schema.TaggedErrorClass<CodexExitError>()("CodexExitError", {
+  exitCode: Schema.Number,
+  message: Schema.String,
+}) {}
+
+export class MissingInvocationMarker extends Schema.TaggedErrorClass<MissingInvocationMarker>()(
+  "MissingInvocationMarker",
+  { message: Schema.String },
+) {}
+
+export type CodexInvocationError =
+  | CodexSpawnError
+  | CodexStreamError
+  | CodexExitStatusError
+  | CodexExitError
+  | MissingInvocationMarker;
+
 const CompactDuration = Schema.TemplateLiteralParser([
   Schema.Int,
   Schema.Literals(["ms", "s", "m", "h"]),
