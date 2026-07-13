@@ -52,6 +52,15 @@ const makeOnceSequenceInput = (overrides: Partial<OnceSequenceInput> = {}): Once
   ...overrides,
 });
 
+const prepareSnapshot = Effect.fnUntraced(function* (
+  workspace: RalphWorkspace["Service"],
+  input: OnceSequenceInput,
+) {
+  const workflow = yield* workspace.prepareWorkflow(input);
+  const phases = yield* workspace.snapshotIteration(workflow);
+  return { ...workflow, phases };
+});
+
 const expectFailureMessage = (result: Exit.Exit<unknown, unknown>, message: string) => {
   expect(Exit.isFailure(result)).toBe(true);
 
@@ -209,7 +218,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
     }),
   );
 
-  it.effect("prepares a contained immutable work snapshot relative to resolved cwd", () =>
+  it.effect("keeps stable sources while refreshing immutable snapshots", () =>
     Effect.gen(function* () {
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -220,9 +229,9 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       yield* fileSystem.makeDirectory(projectDirectory);
       yield* fileSystem.writeFileString(workPath, "Do the approved work.\n");
 
-      const prepared = yield* withWorkingDirectory(
+      const workflow = yield* withWorkingDirectory(
         tempDirectory,
-        workspace.prepareOnceSequence(
+        workspace.prepareWorkflow(
           makeOnceSequenceInput({
             cwd: Option.some("./project"),
             work: Option.some("./WORK.md"),
@@ -230,19 +239,59 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
           }),
         ),
       );
-      yield* fileSystem.writeFileString(workPath, "Changed after preparation.\n");
+      const firstSnapshot = yield* workspace.snapshotIteration(workflow);
+      yield* fileSystem.writeFileString(workPath, "Changed after snapshot.\n");
+      const nextSnapshot = yield* workspace.snapshotIteration(workflow);
 
-      expect(prepared.workingDirectory).toBe(yield* fileSystem.realPath(projectDirectory));
-      expect(prepared.phases).toEqual({
-        before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-        work: {
-          _tag: "Ready",
-          role: "Work",
-          prompt: "Do the approved work.\n",
-        },
-        after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+      expect(workflow.workingDirectory).toBe(yield* fileSystem.realPath(projectDirectory));
+      expect(workflow.sources.work).toEqual({
+        origin: "Explicit",
+        role: "Work",
+        path: join(workflow.workingDirectory, "WORK.md"),
       });
-      expect(prepared.yolo).toBe(true);
+      expect(firstSnapshot.work.prompt).toBe("Do the approved work.\n");
+      expect(nextSnapshot.work.prompt).toBe("Changed after snapshot.\n");
+      expect(workflow.yolo).toBe(true);
+    }),
+  );
+
+  it.effect("isolates later phase prompts from same-sequence edits", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const beforePath = join(tempDirectory, "BEFORE.md");
+      const workPath = join(tempDirectory, "WORK.md");
+      const afterPath = join(tempDirectory, "AFTER.md");
+
+      yield* fileSystem.writeFileString(beforePath, "Prepare.\n");
+      yield* fileSystem.writeFileString(workPath, "Work.\n");
+      yield* fileSystem.writeFileString(afterPath, "Verify original work.\n");
+      const workflow = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareWorkflow(
+          makeOnceSequenceInput({
+            before: Option.some("./BEFORE.md"),
+            work: Option.some("./WORK.md"),
+            after: Option.some("./AFTER.md"),
+          }),
+        ),
+      );
+
+      const currentSequence = yield* workspace.snapshotIteration(workflow);
+      yield* fileSystem.writeFileString(afterPath, "Verify changed work.\n");
+      const nextSequence = yield* workspace.snapshotIteration(workflow);
+
+      expect(currentSequence.after).toEqual({
+        _tag: "Ready",
+        role: "AfterWork",
+        prompt: "Verify original work.\n",
+      });
+      expect(nextSequence.after).toEqual({
+        _tag: "Ready",
+        role: "AfterWork",
+        prompt: "Verify changed work.\n",
+      });
     }),
   );
 
@@ -258,7 +307,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
-        workspace.prepareOnceSequence(makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
+        prepareSnapshot(workspace, makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
       );
 
       expect(prepared.phases).toEqual({
@@ -292,7 +341,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
-        workspace.prepareOnceSequence(
+        prepareSnapshot(
+          workspace,
           makeOnceSequenceInput({
             before: Option.some("./DISABLED_BEFORE.md"),
             work: Option.some("./CUSTOM_WORK.md"),
@@ -320,7 +370,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               before: Option.some("./missing-before.md"),
               work: Option.some("./WORK.md"),
@@ -355,7 +406,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const inferred = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               cwd: Option.some("./project"),
               ralphDir: Option.some("./.ralph"),
@@ -366,7 +418,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const explicit = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("./.ralph/WORK.md"),
@@ -387,6 +440,42 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
     }),
   );
 
+  it.effect("revalidates a ready source when snapshotting", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const workPath = join(projectDirectory, "WORK.md");
+      const afterPath = join(projectDirectory, "AFTER.md");
+      const outsideAfter = join(tempDirectory, "outside-after.md");
+
+      yield* fileSystem.makeDirectory(projectDirectory);
+      yield* fileSystem.writeFileString(workPath, "Required work.\n");
+      yield* fileSystem.writeFileString(afterPath, "Original after.\n");
+      yield* fileSystem.writeFileString(outsideAfter, "Outside after.\n");
+      const workflow = yield* withWorkingDirectory(
+        tempDirectory,
+        workspace.prepareWorkflow(
+          makeOnceSequenceInput({
+            cwd: Option.some("./project"),
+            work: Option.some("./WORK.md"),
+            after: Option.some("./AFTER.md"),
+          }),
+        ),
+      );
+      yield* fileSystem.remove(afterPath);
+      yield* fileSystem.symlink(outsideAfter, afterPath);
+
+      const error = yield* Effect.flip(workspace.snapshotIteration(workflow));
+
+      expect(error._tag).toBe("PhaseOutsideWorkingDirectory");
+      if (error._tag === "PhaseOutsideWorkingDirectory") {
+        expect(error.role).toBe("AfterWork");
+      }
+    }),
+  );
+
   it.effect("rejects missing and blank inferred work", () =>
     Effect.gen(function* () {
       const workspace = yield* RalphWorkspace;
@@ -398,18 +487,14 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const missing = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
-            makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") }),
-          ),
+          prepareSnapshot(workspace, makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
         ),
       );
       yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), " \n");
       const blank = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
-            makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") }),
-          ),
+          prepareSnapshot(workspace, makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
         ),
       );
 
@@ -424,12 +509,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const tempDirectory = yield* makeTempDirectory();
       const missing = yield* withWorkingDirectory(
         tempDirectory,
-        Effect.flip(workspace.prepareOnceSequence(makeOnceSequenceInput())),
+        Effect.flip(prepareSnapshot(workspace, makeOnceSequenceInput())),
       );
       const invalidDirectory = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({ ralphDir: Option.some("./missing-ralph") }),
           ),
         ),
@@ -447,7 +533,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({ cwd: Option.some("./missing"), work: Option.some("WORK.md") }),
           ),
         ),
@@ -469,15 +556,14 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const missing = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
-            makeOnceSequenceInput({ work: Option.some("./missing.md") }),
-          ),
+          prepareSnapshot(workspace, makeOnceSequenceInput({ work: Option.some("./missing.md") })),
         ),
       );
       const nonFile = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({ work: Option.some("./work-directory") }),
           ),
         ),
@@ -500,15 +586,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const unreadable = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
-            makeOnceSequenceInput({ work: Option.some("./invalid.md") }),
-          ),
+          prepareSnapshot(workspace, makeOnceSequenceInput({ work: Option.some("./invalid.md") })),
         ),
       );
       const blank = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(makeOnceSequenceInput({ work: Option.some("./blank.md") })),
+          prepareSnapshot(workspace, makeOnceSequenceInput({ work: Option.some("./blank.md") })),
         ),
       );
 
@@ -533,7 +617,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const outside = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("../outside.md"),
@@ -544,7 +629,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const sibling = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("../project-sibling/WORK.md"),
@@ -573,7 +659,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareOnceSequence(
+          prepareSnapshot(
+            workspace,
             makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("./WORK.md"),

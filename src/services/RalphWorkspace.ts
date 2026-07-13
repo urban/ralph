@@ -8,12 +8,13 @@ import {
   type SharedFlagsInput,
 } from "../domain/Ralph";
 import type {
+  IterationSnapshot,
   OnceSequenceInput,
   OptionalPhaseRole,
   OptionalPhaseSnapshot,
   PhaseRole,
   PhaseSource,
-  PreparedOnceSequence,
+  PreparedWorkflow,
   ReadyPhaseSnapshot,
 } from "../domain/WorkInvocation";
 import {
@@ -52,9 +53,10 @@ export class RalphWorkspace extends Context.Service<
   {
     init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>;
     prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
-    prepareOnceSequence(
-      input: OnceSequenceInput,
-    ): Effect.Effect<PreparedOnceSequence, PhaseInputError>;
+    prepareWorkflow(input: OnceSequenceInput): Effect.Effect<PreparedWorkflow, PhaseInputError>;
+    snapshotIteration(
+      workflow: PreparedWorkflow,
+    ): Effect.Effect<IterationSnapshot, PhaseInputError>;
   }
 >()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
@@ -545,59 +547,73 @@ export class RalphWorkspace extends Context.Service<
       });
 
       const snapshotWorkPhase = Effect.fnUntraced(function* (
-        sourceOption: Option.Option<PhaseSource<"Work">>,
+        source: PhaseSource<"Work">,
         workingDirectory: string,
       ): Effect.fn.Return<ReadyPhaseSnapshot<"Work">, PhaseInputError> {
-        if (Option.isNone(sourceOption)) {
-          return yield* new MissingWorkSource({
-            message:
-              "Work instructions are required. Pass --work/-w or --ralph-dir containing WORK.md.",
-          });
-        }
-
-        const prompt = yield* readPhasePrompt(sourceOption.value, workingDirectory);
+        const prompt = yield* readPhasePrompt(source, workingDirectory);
         if (prompt.trim().length === 0) {
           return yield* new BlankWork({
-            path: sourceOption.value.path,
-            message: `Work instructions are required; work file is blank: ${sourceOption.value.path}`,
+            path: source.path,
+            message: `Work instructions are required; work file is blank: ${source.path}`,
           });
         }
 
         return { _tag: "Ready", role: "Work", prompt };
       });
 
-      const prepareOnceSequence = Effect.fnUntraced(function* (input: OnceSequenceInput) {
+      const prepareWorkflow = Effect.fnUntraced(function* (input: OnceSequenceInput) {
         const workingDirectory = yield* canonicalWorkingDirectory(input.cwd);
         const ralphDirectory = yield* resolveRalphDirectory(input.ralphDir, workingDirectory);
-        const beforeSource = resolvePhaseSource(
+        const before = resolvePhaseSource(
           "BeforeWork",
           input.before,
           ralphDirectory,
           workingDirectory,
         );
-        const workSource = resolvePhaseSource("Work", input.work, ralphDirectory, workingDirectory);
-        const afterSource = resolvePhaseSource(
+        const workOption = resolvePhaseSource("Work", input.work, ralphDirectory, workingDirectory);
+        const after = resolvePhaseSource(
           "AfterWork",
           input.after,
           ralphDirectory,
           workingDirectory,
         );
-        const before = yield* snapshotOptionalPhase("BeforeWork", beforeSource, workingDirectory);
-        const work = yield* snapshotWorkPhase(workSource, workingDirectory);
-        const after = yield* snapshotOptionalPhase("AfterWork", afterSource, workingDirectory);
+
+        if (Option.isNone(workOption)) {
+          return yield* new MissingWorkSource({
+            message:
+              "Work instructions are required. Pass --work/-w or --ralph-dir containing WORK.md.",
+          });
+        }
 
         return {
           workingDirectory,
-          phases: { before, work, after },
+          sources: { before, work: workOption.value, after },
           timeouts: input.timeouts,
           yolo: input.yolo,
-        } satisfies PreparedOnceSequence;
+        } satisfies PreparedWorkflow;
+      });
+
+      const snapshotIteration = Effect.fnUntraced(function* (workflow: PreparedWorkflow) {
+        const before = yield* snapshotOptionalPhase(
+          "BeforeWork",
+          workflow.sources.before,
+          workflow.workingDirectory,
+        );
+        const work = yield* snapshotWorkPhase(workflow.sources.work, workflow.workingDirectory);
+        const after = yield* snapshotOptionalPhase(
+          "AfterWork",
+          workflow.sources.after,
+          workflow.workingDirectory,
+        );
+
+        return { before, work, after } satisfies IterationSnapshot;
       });
 
       return RalphWorkspace.of({
         init,
         prepareRunContext,
-        prepareOnceSequence,
+        prepareWorkflow,
+        snapshotIteration,
       });
     }),
   );

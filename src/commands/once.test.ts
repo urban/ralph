@@ -91,16 +91,22 @@ it.effect("once composes parsed input through the fake Codex boundary", () =>
     const workspace = RalphWorkspace.of({
       init: () => Effect.die("init is not part of once"),
       prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
-      prepareOnceSequence: (input) =>
+      prepareWorkflow: (input) =>
         Effect.succeed({
           workingDirectory: "/workspace",
-          phases: {
-            before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-            work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
-            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+          sources: {
+            before: Option.none(),
+            work: { origin: "Explicit", role: "Work", path: "/workspace/WORK.md" },
+            after: Option.none(),
           },
           timeouts: input.timeouts,
           yolo: input.yolo,
+        }),
+      snapshotIteration: () =>
+        Effect.succeed({
+          before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+          work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+          after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
         }),
     });
     const hostTools = HostTools.of({

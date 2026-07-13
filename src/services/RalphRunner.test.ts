@@ -8,9 +8,10 @@ import {
   IdleInvocationTimeout,
   type InvocationOutcome,
   type InvocationRequest,
+  type IterationSnapshot,
   MissingInvocationMarker,
   type OnceFlagsInput,
-  type PreparedOnceSequence,
+  type PreparedWorkflow,
 } from "../domain/WorkInvocation";
 import { CodexRunner } from "./CodexRunner";
 import { HostTools } from "./HostTools";
@@ -32,24 +33,27 @@ const input = (overrides: Partial<OnceFlagsInput> = {}): OnceFlagsInput => ({
   ...overrides,
 });
 
-const prepared: PreparedOnceSequence = {
+const prepared: PreparedWorkflow = {
   workingDirectory: "/workspace",
-  phases: {
-    before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-    work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
-    after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+  sources: {
+    before: Option.none(),
+    work: { origin: "Explicit", role: "Work", path: "/workspace/WORK.md" },
+    after: Option.none(),
   },
   timeouts: { idle: Duration.minutes(5), invocation: Duration.minutes(30) },
   yolo: false,
 };
 
-const explicitThreePhaseSequence: PreparedOnceSequence = {
-  ...prepared,
-  phases: {
-    before: { _tag: "Ready", role: "BeforeWork", prompt: "Prepare the work." },
-    work: { _tag: "Ready", role: "Work", prompt: "Do the work." },
-    after: { _tag: "Ready", role: "AfterWork", prompt: "Verify the work." },
-  },
+const defaultSnapshot: IterationSnapshot = {
+  before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+  work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+  after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+};
+
+const explicitThreePhaseSnapshot: IterationSnapshot = {
+  before: { _tag: "Ready", role: "BeforeWork", prompt: "Prepare the work." },
+  work: { _tag: "Ready", role: "Work", prompt: "Do the work." },
+  after: { _tag: "Ready", role: "AfterWork", prompt: "Verify the work." },
 };
 
 const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
@@ -58,7 +62,7 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   ) => Effect.Effect<{ readonly invocationComplete: true; readonly workflowComplete: boolean }, E>,
   options: {
     readonly notificationDefects?: boolean;
-    readonly preparedSequence?: PreparedOnceSequence;
+    readonly snapshot?: IterationSnapshot;
   } = {},
 ) {
   const output = yield* Ref.make<Array<Uint8Array>>([]);
@@ -89,10 +93,9 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   const workspace = RalphWorkspace.of({
     init: () => Effect.die("init is not part of once"),
     prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
-    prepareOnceSequence: () =>
-      Ref.update(workspaceCalls, (count) => count + 1).pipe(
-        Effect.as(options.preparedSequence ?? prepared),
-      ),
+    prepareWorkflow: () =>
+      Ref.update(workspaceCalls, (count) => count + 1).pipe(Effect.as(prepared)),
+    snapshotIteration: () => Effect.succeed(options.snapshot ?? defaultSnapshot),
   });
   const hostTools = HostTools.of({
     commandExists: () => Effect.succeed(true),
@@ -132,7 +135,7 @@ describe("RalphRunner.runOnce", () => {
   it.effect("runs every ready phase in before, work, after order", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(invocationComplete, {
-        preparedSequence: explicitThreePhaseSequence,
+        snapshot: explicitThreePhaseSnapshot,
       });
 
       yield* harness.run(input());
@@ -158,16 +161,40 @@ describe("RalphRunner.runOnce", () => {
     }),
   );
 
+  it.effect("keeps non-phase coordination state live between invocations", () =>
+    Effect.gen(function* () {
+      const sharedState = yield* Ref.make("initial");
+      const observedByWork = yield* Ref.make<Array<string>>([]);
+      const harness = yield* makeHarness(
+        (request) => {
+          const coordinate =
+            request.prompt === "Prepare the work."
+              ? Ref.set(sharedState, "prepared")
+              : request.prompt === "Do the work."
+                ? Ref.get(sharedState).pipe(
+                    Effect.flatMap((value) =>
+                      Ref.update(observedByWork, (observed) => [...observed, value]),
+                    ),
+                  )
+                : Effect.void;
+          return coordinate.pipe(Effect.andThen(invocationComplete()));
+        },
+        { snapshot: explicitThreePhaseSnapshot },
+      );
+
+      yield* harness.run(input());
+
+      assert.deepStrictEqual(yield* Ref.get(observedByWork), ["prepared"]);
+    }),
+  );
+
   it.effect("does not invoke skipped optional phases", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(invocationComplete, {
-        preparedSequence: {
-          ...prepared,
-          phases: {
-            before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
-            work: prepared.phases.work,
-            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
-          },
+        snapshot: {
+          before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
+          work: defaultSnapshot.work,
+          after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
         },
       });
 
@@ -187,7 +214,7 @@ describe("RalphRunner.runOnce", () => {
       const harness = yield* makeHarness(
         (request) =>
           request.prompt === "Do the work." ? Effect.fail(failure) : invocationComplete(),
-        { preparedSequence: explicitThreePhaseSequence },
+        { snapshot: explicitThreePhaseSnapshot },
       );
 
       const result = yield* harness.run(input()).pipe(Effect.result);

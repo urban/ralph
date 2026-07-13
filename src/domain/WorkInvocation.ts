@@ -90,9 +90,15 @@ export interface IterationSnapshot {
   readonly after: OptionalPhaseSnapshot<"AfterWork">;
 }
 
-export interface PreparedOnceSequence {
+export interface ResolvedPhaseSources {
+  readonly before: Option.Option<PhaseSource<"BeforeWork">>;
+  readonly work: PhaseSource<"Work">;
+  readonly after: Option.Option<PhaseSource<"AfterWork">>;
+}
+
+export interface PreparedWorkflow {
   readonly workingDirectory: string;
-  readonly phases: IterationSnapshot;
+  readonly sources: ResolvedPhaseSources;
   readonly timeouts: TimeoutPolicy;
   readonly yolo: boolean;
 }

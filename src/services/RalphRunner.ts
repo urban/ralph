@@ -6,7 +6,7 @@ import type {
   OnceFlagsInput,
   PhaseRole,
   PhaseSnapshot,
-  PreparedOnceSequence,
+  PreparedWorkflow,
   TimeoutInputError,
 } from "../domain/WorkInvocation";
 import { type CodexInvocationError, OperatorOutputError } from "../domain/WorkInvocation";
@@ -65,7 +65,7 @@ export class RalphRunner extends Context.Service<
       };
 
       const invocationRequest = (
-        prepared: PreparedOnceSequence,
+        prepared: PreparedWorkflow,
         phase: Extract<PhaseSnapshot, { readonly _tag: "Ready" }>,
       ): InvocationRequest => ({
         workingDirectory: prepared.workingDirectory,
@@ -75,7 +75,7 @@ export class RalphRunner extends Context.Service<
       });
 
       const runPhase = Effect.fnUntraced(function* (
-        prepared: PreparedOnceSequence,
+        prepared: PreparedWorkflow,
         phase: PhaseSnapshot,
       ) {
         if (phase._tag === "Skipped") {
@@ -110,7 +110,7 @@ export class RalphRunner extends Context.Service<
       const runOnce = Effect.fn("RalphRunner.runOnce")(function* (input: OnceFlagsInput) {
         const execution = Effect.gen(function* () {
           const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
-          const prepared = yield* workspace.prepareOnceSequence({
+          const prepared = yield* workspace.prepareWorkflow({
             before: input.before,
             work: input.work,
             after: input.after,
@@ -120,9 +120,10 @@ export class RalphRunner extends Context.Service<
             timeouts,
           });
 
+          const snapshot = yield* workspace.snapshotIteration(prepared);
           yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
           const workflowCompletions = yield* Effect.forEach(
-            [prepared.phases.before, prepared.phases.work, prepared.phases.after],
+            [snapshot.before, snapshot.work, snapshot.after],
             (phase) => runPhase(prepared, phase),
           );
 
