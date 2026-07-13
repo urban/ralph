@@ -1,0 +1,317 @@
+import * as BunServices from "@effect/platform-bun/BunServices";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Ref, Result, Sink, Stdio, Stream } from "effect";
+import { Command } from "effect/unstable/cli";
+import { join } from "node:path";
+
+import {
+  CodexExitError,
+  type CodexInvocationError,
+  type InvocationOutcome,
+  type InvocationRequest,
+} from "../domain/WorkInvocation";
+import { RalphExit } from "../errors/RalphExit";
+import { CodexRunner } from "../services/CodexRunner";
+import { HostTools } from "../services/HostTools";
+import { RalphRunner } from "../services/RalphRunner";
+import { RalphWorkspace } from "../services/RalphWorkspace";
+import { commandLoop } from "./loop";
+
+const runLoop = Command.runWith(commandLoop, { version: "test" });
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+const invocationOutcome = (workflowComplete: boolean): InvocationOutcome => ({
+  invocationComplete: true,
+  workflowComplete,
+});
+
+const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
+  invoke: (request: InvocationRequest) => Effect.Effect<InvocationOutcome, E>,
+) {
+  const invocations = yield* Ref.make<Array<string>>([]);
+  const notifications = yield* Ref.make<Array<string>>([]);
+  const output = yield* Ref.make<Array<Uint8Array>>([]);
+  const toBytes = (chunk: string | Uint8Array) =>
+    typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+  const codexRunner = CodexRunner.of({
+    runInvocation: (request) =>
+      Ref.update(invocations, (prompts) => [...prompts, request.prompt]).pipe(
+        Effect.andThen(invoke(request)),
+      ),
+    run: () => Effect.die("legacy run is not part of loop"),
+    runCapture: () => Effect.die("legacy capture is not part of loop"),
+    isChecklistComplete: () => false,
+  });
+  const hostTools = HostTools.of({
+    commandExists: () => Effect.succeed(true),
+    ensureCommandAvailable: () => Effect.void,
+    notifyIfAvailable: (message) => Ref.update(notifications, (messages) => [...messages, message]),
+  });
+  const stdio = Stdio.make({
+    args: Effect.succeed([]),
+    stdin: Stream.empty,
+    stdout: () =>
+      Sink.forEach((chunk: string | Uint8Array) =>
+        Ref.update(output, (chunks) => [...chunks, toBytes(chunk)]),
+      ),
+    stderr: () => Sink.drain,
+  });
+  const orchestrationLayer = RalphRunner.layer.pipe(Layer.provideMerge(RalphWorkspace.layer));
+  const run = (args: ReadonlyArray<string>) =>
+    runLoop(args).pipe(
+      Effect.provide(orchestrationLayer),
+      Effect.provideService(CodexRunner, codexRunner),
+      Effect.provideService(HostTools, hostTools),
+      Effect.provideService(Stdio.Stdio, stdio),
+    );
+
+  return { invocations, notifications, output, run };
+});
+
+const readOutput = Effect.fnUntraced(function* (output: Ref.Ref<Array<Uint8Array>>) {
+  return (yield* Ref.get(output)).map((chunk) => decoder.decode(chunk)).join("");
+});
+
+const writePhaseFiles = Effect.fnUntraced(function* (
+  directory: string,
+  prompts: {
+    readonly before: string;
+    readonly work: string;
+    readonly after: string;
+  },
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  yield* fileSystem.makeDirectory(directory, { recursive: true });
+  yield* fileSystem.writeFileString(join(directory, "BEFORE_WORK.md"), prompts.before);
+  yield* fileSystem.writeFileString(join(directory, "WORK.md"), prompts.work);
+  yield* fileSystem.writeFileString(join(directory, "AFTER_WORK.md"), prompts.after);
+});
+
+const assertNonzeroExit = <E>(result: Result.Result<void, E>): void => {
+  assert.isTrue(Result.isFailure(result));
+  if (Result.isFailure(result)) {
+    assert.isTrue(result.failure instanceof RalphExit);
+    if (result.failure instanceof RalphExit) {
+      assert.strictEqual(result.failure.exitCode, 1);
+    }
+  }
+};
+
+describe("loop phase workflow", () => {
+  it.effect("advances checklist state across fresh phase snapshots until completion", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-loop-state-" });
+      const phaseDirectory = join(workspace, ".ralph");
+      const checklistPath = join(workspace, "CHECKLIST.md");
+      const progressPath = join(workspace, "PROGRESS.md");
+      const stateObservedByAfter = yield* Ref.make<Array<string>>([]);
+
+      yield* writePhaseFiles(phaseDirectory, {
+        before: "Before v1.\n",
+        work: "Work v1.\n",
+        after: "After v1.\n",
+      });
+      yield* fileSystem.writeFileString(checklistPath, "- [ ] alpha\n- [ ] beta\n");
+      yield* fileSystem.writeFileString(progressPath, "");
+
+      const invoke = Effect.fnUntraced(
+        function* (request: InvocationRequest) {
+          switch (request.prompt) {
+            case "Before v1.\n":
+              yield* fileSystem.writeFileString(
+                join(phaseDirectory, "BEFORE_WORK.md"),
+                "Before v2.\n",
+              );
+              yield* fileSystem.writeFileString(join(phaseDirectory, "WORK.md"), "Work v2.\n");
+              yield* fileSystem.writeFileString(
+                join(phaseDirectory, "AFTER_WORK.md"),
+                "After v2.\n",
+              );
+              return invocationOutcome(false);
+            case "Work v1.\n":
+              yield* fileSystem.writeFileString(checklistPath, "- [x] alpha\n- [ ] beta\n");
+              yield* fileSystem.writeFileString(progressPath, "completed alpha\n");
+              return invocationOutcome(false);
+            case "After v1.\n": {
+              const checklist = yield* fileSystem.readFileString(checklistPath);
+              const progress = yield* fileSystem.readFileString(progressPath);
+              yield* Ref.update(stateObservedByAfter, (states) => [
+                ...states,
+                `${checklist}|${progress}`,
+              ]);
+              return invocationOutcome(false);
+            }
+            case "Before v2.\n":
+              return invocationOutcome(false);
+            case "Work v2.\n":
+              yield* fileSystem.writeFileString(checklistPath, "- [x] alpha\n- [x] beta\n");
+              yield* fileSystem.writeFileString(progressPath, "completed alpha\ncompleted beta\n");
+              return invocationOutcome(false);
+            case "After v2.\n": {
+              const checklist = yield* fileSystem.readFileString(checklistPath);
+              const progress = yield* fileSystem.readFileString(progressPath);
+              yield* Ref.update(stateObservedByAfter, (states) => [
+                ...states,
+                `${checklist}|${progress}`,
+              ]);
+              return invocationOutcome(true);
+            }
+            default:
+              return yield* Effect.die(`Unexpected prompt: ${request.prompt}`);
+          }
+        },
+        Effect.catch(() => Effect.die("Could not advance loop workflow fixtures")),
+      );
+      const harness = yield* makeHarness(invoke);
+
+      yield* harness.run(["--cwd", workspace, "--ralph-dir", "./.ralph"]);
+
+      assert.deepStrictEqual(yield* Ref.get(harness.invocations), [
+        "Before v1.\n",
+        "Work v1.\n",
+        "After v1.\n",
+        "Before v2.\n",
+        "Work v2.\n",
+        "After v2.\n",
+      ]);
+      assert.deepStrictEqual(yield* Ref.get(stateObservedByAfter), [
+        "- [x] alpha\n- [ ] beta\n|completed alpha\n",
+        "- [x] alpha\n- [x] beta\n|completed alpha\ncompleted beta\n",
+      ]);
+      assert.strictEqual(
+        yield* fileSystem.readFileString(checklistPath),
+        "- [x] alpha\n- [x] beta\n",
+      );
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph loop succeeded: workflow complete after 2 iterations.",
+      ]);
+      assert.deepStrictEqual((yield* readOutput(harness.output)).match(/=== Iteration \d+ ===/g), [
+        "=== Iteration 1 ===",
+        "=== Iteration 2 ===",
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("honors completion from every phase through the public command", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "ralph-loop-complete-",
+      });
+      const phaseDirectory = join(workspace, ".ralph");
+      yield* writePhaseFiles(phaseDirectory, {
+        before: "Prepare.\n",
+        work: "Work.\n",
+        after: "Verify.\n",
+      });
+      const scenarios: ReadonlyArray<{
+        readonly completingPrompt: string;
+        readonly expectedPrompts: ReadonlyArray<string>;
+      }> = [
+        { completingPrompt: "Prepare.\n", expectedPrompts: ["Prepare.\n"] },
+        { completingPrompt: "Work.\n", expectedPrompts: ["Prepare.\n", "Work.\n"] },
+        {
+          completingPrompt: "Verify.\n",
+          expectedPrompts: ["Prepare.\n", "Work.\n", "Verify.\n"],
+        },
+      ];
+
+      yield* Effect.forEach(
+        scenarios,
+        (scenario) =>
+          Effect.gen(function* () {
+            const harness = yield* makeHarness((request) =>
+              Effect.succeed(invocationOutcome(request.prompt === scenario.completingPrompt)),
+            );
+
+            yield* harness.run([
+              "--cwd",
+              workspace,
+              "--ralph-dir",
+              "./.ralph",
+              "--iterations",
+              "3",
+            ]);
+
+            assert.deepStrictEqual(yield* Ref.get(harness.invocations), scenario.expectedPrompts);
+            assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+              "Ralph loop succeeded: workflow complete after 1 iteration.",
+            ]);
+          }),
+        { discard: true },
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("uses default and explicit limits and reports typed nonzero exhaustion", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "ralph-loop-limits-",
+      });
+      yield* fileSystem.writeFileString(join(workspace, "WORK.md"), "Keep working.\n");
+      const scenarios: ReadonlyArray<{
+        readonly args: ReadonlyArray<string>;
+        readonly expectedIterations: number;
+      }> = [
+        {
+          args: ["--cwd", workspace, "--work", "./WORK.md"],
+          expectedIterations: 10,
+        },
+        {
+          args: ["--cwd", workspace, "--work", "./WORK.md", "-n", "2"],
+          expectedIterations: 2,
+        },
+      ];
+
+      yield* Effect.forEach(
+        scenarios,
+        (scenario) =>
+          Effect.gen(function* () {
+            const harness = yield* makeHarness(() => Effect.succeed(invocationOutcome(false)));
+            const result = yield* harness.run(scenario.args).pipe(Effect.result);
+
+            assertNonzeroExit(result);
+            assert.strictEqual(
+              (yield* Ref.get(harness.invocations)).length,
+              scenario.expectedIterations,
+            );
+            assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+              `Ralph loop failed: Ralph loop exhausted after ${scenario.expectedIterations} iterations without workflow completion.`,
+            ]);
+          }),
+        { discard: true },
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("stops after a phase failure and notifies exactly once", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-loop-fail-" });
+      const phaseDirectory = join(workspace, ".ralph");
+      yield* writePhaseFiles(phaseDirectory, {
+        before: "Prepare.\n",
+        work: "Work.\n",
+        after: "Verify.\n",
+      });
+      const harness = yield* makeHarness((request) =>
+        request.prompt === "Work.\n"
+          ? Effect.fail(new CodexExitError({ exitCode: 17, message: "work failed" }))
+          : Effect.succeed(invocationOutcome(false)),
+      );
+
+      const result = yield* harness
+        .run(["--cwd", workspace, "--ralph-dir", "./.ralph", "-n", "3"])
+        .pipe(Effect.result);
+
+      assertNonzeroExit(result);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocations), ["Prepare.\n", "Work.\n"]);
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph loop failed: work failed",
+      ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+});
