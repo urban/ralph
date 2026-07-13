@@ -96,13 +96,9 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
       Ref.update(invocationCalls, (prompts) => [...prompts, request.prompt]).pipe(
         Effect.andThen(invocation(request)),
       ),
-    run: () => Effect.die("legacy run is not part of once"),
-    runCapture: () => Effect.die("legacy capture is not part of once"),
-    isChecklistComplete: () => false,
   });
   const workspace = RalphWorkspace.of({
     init: () => Effect.die("init is not part of once"),
-    prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
     prepareWorkflow: () =>
       Ref.update(workspaceCalls, (count) => count + 1).pipe(Effect.as(prepared)),
     snapshotIteration: () =>

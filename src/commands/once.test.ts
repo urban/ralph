@@ -12,6 +12,40 @@ import { commandOnce } from "./once";
 
 const runOnce = Command.runWith(commandOnce, { version: "test" });
 
+it.effect("rejects removed legacy flags as ordinary unrecognized options", () =>
+  Effect.gen(function* () {
+    const runner = RalphRunner.of({
+      runOnce: () => Effect.die("removed flags must fail before delegation"),
+      runLoop: () => Effect.die("loop is not part of once parsing"),
+    });
+
+    yield* Effect.forEach(
+      ["--checklist", "--instructions", "--progress"],
+      (flag) =>
+        Effect.gen(function* () {
+          const error = yield* runOnce([flag, "./legacy.md"]).pipe(
+            Effect.provideService(RalphRunner, runner),
+            Effect.provide(BunServices.layer),
+            Effect.flip,
+          );
+
+          assert.strictEqual(error._tag, "ShowHelp");
+          if (error._tag === "ShowHelp") {
+            assert.strictEqual(error.errors.length, 1);
+            const unrecognized = error.errors.filter(
+              (candidate) => candidate._tag === "UnrecognizedOption",
+            );
+            assert.deepStrictEqual(
+              unrecognized.map((candidate) => candidate.option),
+              [flag],
+            );
+          }
+        }),
+      { discard: true },
+    );
+  }),
+);
+
 it.effect("once parses aliases, yolo, and compact timeout defaults before delegating", () =>
   Effect.gen(function* () {
     const captured = yield* Ref.make(Option.none<OnceFlagsInput>());
@@ -86,13 +120,9 @@ it.effect("once composes parsed input through the fake Codex boundary", () =>
         Ref.update(invocations, (count) => count + 1).pipe(
           Effect.as({ invocationComplete: true, workflowComplete: false }),
         ),
-      run: () => Effect.die("legacy run is not part of once"),
-      runCapture: () => Effect.die("legacy capture is not part of once"),
-      isChecklistComplete: () => false,
     });
     const workspace = RalphWorkspace.of({
       init: () => Effect.die("init is not part of once"),
-      prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
       prepareWorkflow: (input) =>
         Effect.succeed({
           workingDirectory: "/workspace",

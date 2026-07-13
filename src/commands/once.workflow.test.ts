@@ -36,9 +36,6 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
       Ref.update(invocations, (prompts) => [...prompts, request.prompt]).pipe(
         Effect.andThen(invoke(request)),
       ),
-    run: () => Effect.die("legacy run is not part of once"),
-    runCapture: () => Effect.die("legacy capture is not part of once"),
-    isChecklistComplete: () => false,
   });
   const hostTools = HostTools.of({
     commandExists: () => Effect.succeed(true),

@@ -7,7 +7,6 @@ import {
   invocationCompletionMarker,
   scanMarkerChunk,
 } from "../domain/CompletionMarkers";
-import type { PreparedRunContext } from "../domain/Ralph";
 import {
   AbsoluteInvocationTimeout,
   CodexExitError,
@@ -21,30 +20,12 @@ import {
   type InvocationRequest,
   MissingInvocationMarker,
 } from "../domain/WorkInvocation";
-import type { RalphExit } from "../errors/RalphExit";
-import { failWithExitCode, failWithMessage } from "../errors/RalphExit";
-
-const completionMarker = "<promise>COMPLETE</promise>";
 
 type InvocationDecision =
   | { readonly _tag: "Completed"; readonly outcome: InvocationOutcome }
   | { readonly _tag: "TimedOut"; readonly kind: "Idle" | "Absolute" };
 
 export const genericCompletionProtocol = `\n\nWhen you have successfully completed these instructions, emit exactly ${invocationCompletionMarker}. Do not emit this marker until the instructions are complete.`;
-
-const isChecklistComplete = (output: string) => output.includes(completionMarker);
-
-const renderCodexPrompt = (runContext: PreparedRunContext) => `<checklist>
-@${runContext.checklistPath}
-</checklist>
-
-<progress_log>
-@${runContext.progressPath}
-</progress_log>
-
-<instructions>
-@${runContext.instructionsPath}
-</instructions>`;
 
 const makeWorkInvocationCommand = (request: InvocationRequest) =>
   ChildProcess.make(
@@ -75,51 +56,12 @@ const makeWorkInvocationCommand = (request: InvocationRequest) =>
     },
   );
 
-const makeCodexExecCommand = (runContext: PreparedRunContext, stdout: ChildProcess.CommandOutput) =>
-  ChildProcess.make(
-    "codex",
-    runContext.yolo
-      ? [
-          "exec",
-          "--dangerously-bypass-approvals-and-sandbox",
-          "-C",
-          runContext.workingDirectory,
-          renderCodexPrompt(runContext),
-        ]
-      : [
-          "exec",
-          "--full-auto",
-          "--sandbox",
-          "workspace-write",
-          "-C",
-          runContext.workingDirectory,
-          renderCodexPrompt(runContext),
-        ],
-    {
-      cwd: runContext.workingDirectory,
-      stdin: "inherit",
-      stdout,
-      stderr: "inherit",
-    },
-  );
-
-const ensureSuccessfulExit = Effect.fn("ensureSuccessfulExit")(function* (
-  exitCode: ChildProcessSpawner.ExitCode,
-) {
-  if (exitCode !== ChildProcessSpawner.ExitCode(0)) {
-    return yield* failWithExitCode(Number(exitCode));
-  }
-});
-
 export class CodexRunner extends Context.Service<
   CodexRunner,
   {
     runInvocation(
       request: InvocationRequest,
     ): Effect.Effect<InvocationOutcome, CodexInvocationError>;
-    run(runContext: PreparedRunContext): Effect.Effect<void, RalphExit>;
-    runCapture(runContext: PreparedRunContext): Effect.Effect<string, RalphExit>;
-    isChecklistComplete(output: string): boolean;
   }
 >()("ralph-effect/services/CodexRunner") {
   static readonly layer = Layer.effect(
@@ -263,39 +205,8 @@ export class CodexRunner extends Context.Service<
             });
       });
 
-      const run = Effect.fn("CodexRunner.run")(function* (runContext: PreparedRunContext) {
-        const exitCode = yield* spawner
-          .exitCode(makeCodexExecCommand(runContext, "inherit"))
-          .pipe(Effect.catch((error) => failWithMessage(error.message)));
-
-        yield* ensureSuccessfulExit(exitCode);
-      });
-
-      const runCaptureScoped = Effect.fn("CodexRunner.runCapture")(function* (
-        runContext: PreparedRunContext,
-      ) {
-        const handle = yield* spawner
-          .spawn(makeCodexExecCommand(runContext, "pipe"))
-          .pipe(Effect.catch((error) => failWithMessage(error.message)));
-        const output = yield* handle.stdout.pipe(
-          Stream.decodeText(),
-          Stream.mkString,
-          Effect.catch((error) => failWithMessage(error.message)),
-        );
-        const exitCode = yield* handle.exitCode.pipe(
-          Effect.catch((error) => failWithMessage(error.message)),
-        );
-
-        yield* ensureSuccessfulExit(exitCode);
-
-        return output;
-      });
-
       return CodexRunner.of({
         runInvocation: (request) => Effect.scoped(runInvocationScoped(request)),
-        run,
-        runCapture: (runContext) => Effect.scoped(runCaptureScoped(runContext)),
-        isChecklistComplete,
       });
     }),
   );

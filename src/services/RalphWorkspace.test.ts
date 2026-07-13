@@ -3,7 +3,6 @@ import { expect, layer } from "@effect/vitest";
 import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import { join } from "node:path";
 
-import type { SharedFlagsInput } from "../domain/Ralph";
 import type { OnceSequenceInput } from "../domain/WorkInvocation";
 import { RalphWorkspace } from "./RalphWorkspace";
 
@@ -27,16 +26,6 @@ const withWorkingDirectory = <A, E, R>(directory: string, self: Effect.Effect<A,
         process.chdir(originalCwd);
       }),
   );
-
-const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlagsInput => ({
-  checklist: Option.none(),
-  instructions: Option.none(),
-  progress: Option.none(),
-  ralphDir: Option.none(),
-  cwd: Option.none(),
-  yolo: false,
-  ...overrides,
-});
 
 const makeOnceSequenceInput = (overrides: Partial<OnceSequenceInput> = {}): OnceSequenceInput => ({
   before: Option.none(),
@@ -175,61 +164,6 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const resolvedTargetFile = yield* fileSystem.realPath(targetFile);
 
       expectFailureMessage(result, `Init target is a file: ${resolvedTargetFile}`);
-    }),
-  );
-
-  it.effect("prepareRunContext uses --ralph-dir with per-file overrides and --cwd", () =>
-    Effect.gen(function* () {
-      const workspace = yield* RalphWorkspace;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const tempDirectory = yield* makeTempDirectory();
-      const ralphDirectory = join(tempDirectory, ".ralph");
-      const projectDirectory = join(tempDirectory, "project");
-      const customInstructions = join(tempDirectory, "custom-instructions.md");
-
-      yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
-      yield* fileSystem.makeDirectory(projectDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(join(ralphDirectory, "CHECKLIST.md"), "checklist\n");
-      yield* fileSystem.writeFileString(join(ralphDirectory, "INSTRUCTIONS.md"), "instructions\n");
-      yield* fileSystem.writeFileString(join(ralphDirectory, "PROGRESS.md"), "progress\n");
-      yield* fileSystem.writeFileString(customInstructions, "custom instructions\n");
-
-      const context = yield* withWorkingDirectory(
-        tempDirectory,
-        workspace.prepareRunContext(
-          makeSharedFlags({
-            instructions: Option.some("./custom-instructions.md"),
-            ralphDir: Option.some("./.ralph"),
-            cwd: Option.some("./project"),
-          }),
-        ),
-      );
-
-      const resolvedRalphDirectory = yield* fileSystem.realPath(ralphDirectory);
-      const resolvedProjectDirectory = yield* fileSystem.realPath(projectDirectory);
-      const resolvedCustomInstructions = yield* fileSystem.realPath(customInstructions);
-
-      expect(context.checklistPath).toBe(join(resolvedRalphDirectory, "CHECKLIST.md"));
-      expect(context.instructionsPath).toBe(resolvedCustomInstructions);
-      expect(context.progressPath).toBe(join(resolvedRalphDirectory, "PROGRESS.md"));
-      expect(context.workingDirectory).toBe(resolvedProjectDirectory);
-    }),
-  );
-
-  it.effect("prepareRunContext fails closed when runtime inputs are missing", () =>
-    Effect.gen(function* () {
-      const workspace = yield* RalphWorkspace;
-      const tempDirectory = yield* makeTempDirectory();
-
-      const result = yield* withWorkingDirectory(
-        tempDirectory,
-        workspace.prepareRunContext(makeSharedFlags()).pipe(Effect.exit),
-      );
-
-      expectFailureMessage(
-        result,
-        "Missing Ralph runtime inputs: --checklist, --instructions, --progress. Pass --ralph-dir or all of --checklist, --instructions, and --progress.",
-      );
     }),
   );
 

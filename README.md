@@ -2,11 +2,7 @@
 
 Ralph is a small Bun CLI around `codex exec`.
 
-It runs Codex against three files:
-
-- a checklist
-- a progress log
-- an instructions file
+It runs Codex through independently authored before-work, work, and after-work phases.
 
 Main entrypoints:
 
@@ -18,14 +14,11 @@ Main entrypoints:
 
 `ralph once` and `ralph loop` require runtime Ralph inputs.
 
-Pass either:
+Pass a required work phase with `--work` / `-w`, or pass `--ralph-dir` / `-d` to use the phase files in one directory. Optional before-work and after-work phases use `--before` / `-b` and `--after` / `-a`.
 
-- `-d`, `--ralph-dir <directory>` with `CHECKLIST.md`, `INSTRUCTIONS.md`, and `PROGRESS.md`
-- all three explicit file flags: `--checklist`, `--instructions`, `--progress`
+Explicit phase flags override `--ralph-dir` per phase.
 
-Explicit file flags override `-d` / `--ralph-dir` per file.
-
-Relative paths passed with `init`, `-d` / `--ralph-dir`, `--cwd`, and file flags resolve from the directory where you launch `ralph` or `bun run cli` locally.
+Relative init targets resolve from the launch directory. Runtime phase paths resolve from the working directory selected with `--cwd` / `-C`, or from the launch directory by default.
 
 The bundled `init` templates live in `src/templates/` inside this repo.
 
@@ -36,17 +29,17 @@ Codex runs in the launch directory by default. Use `--cwd <directory>` to run Co
 ```bash
 ralph init
 ralph init .ralph
-ralph once -d .ralph
+ralph once --ralph-dir .ralph
 ralph loop --ralph-dir .ralph -n 20
-ralph once -c .ralph/CHECKLIST.md -p .ralph/PROGRESS.md -i .ralph/INSTRUCTIONS.md
-ralph once -d .ralph --cwd .
+ralph once --work ./WORK.md
+ralph once --ralph-dir .ralph --cwd .
 ```
 
 Local repo dev:
 
 ```bash
 bun run cli init
-bun run cli once -d .ralph
+bun run cli once --ralph-dir .ralph
 ```
 
 ## Flags
@@ -57,11 +50,13 @@ bun run cli once -d .ralph
 
 Shared flags on `once` and `loop`:
 
-- `-c`, `--checklist <path>`
-- `-i`, `--instructions <path>`
-- `-p`, `--progress <path>`
+- `-b`, `--before <path>`
+- `-w`, `--work <path>`
+- `-a`, `--after <path>`
 - `-d`, `--ralph-dir <directory>`
-- `--cwd <directory>`
+- `-C`, `--cwd <directory>`
+- `--idle-timeout <duration>`
+- `--invocation-timeout <duration>`
 - `--yolo`
 
 `loop` also supports:
@@ -125,7 +120,7 @@ Then run:
 
 ```bash
 ralph init
-ralph once -d .
+ralph once --work ./WORK.md
 ```
 
 Local repo dev:
@@ -133,12 +128,12 @@ Local repo dev:
 ```bash
 bun install
 bun run cli init
-bun run cli once -d .
+bun run cli once --work ./WORK.md
 ```
 
 ## Notes
 
-- `init` copies bundled templates from `src/templates/` and backs up existing Ralph files before overwrite with sibling names like `CHECKLIST.md.bak.<timestamp>`.
+- `init` copies bundled phase templates from `src/templates/` and backs up existing phase files before overwrite with sibling names like `WORK.md.bak.<timestamp>`.
 - `loop` stops early when stdout contains `<promise>COMPLETE</promise>`.
 - Optional desktop notifications use `tt notify` when `tt` exists.
 - Ralph is non-interactive by design.
