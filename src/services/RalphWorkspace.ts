@@ -4,18 +4,18 @@ import {
   type PreparedRunContext,
   ralphFileNames,
   type RalphFileRole,
-  type RalphFilePaths,
   type SharedFlagsInput,
 } from "../domain/Ralph";
-import type {
-  IterationSnapshot,
-  OnceSequenceInput,
-  OptionalPhaseRole,
-  OptionalPhaseSnapshot,
-  PhaseRole,
-  PhaseSource,
-  PreparedWorkflow,
-  ReadyPhaseSnapshot,
+import {
+  type IterationSnapshot,
+  type OnceSequenceInput,
+  type OptionalPhaseRole,
+  type OptionalPhaseSnapshot,
+  phaseFileNames,
+  type PhaseRole,
+  type PhaseSource,
+  type PreparedWorkflow,
+  type ReadyPhaseSnapshot,
 } from "../domain/WorkInvocation";
 import {
   BlankWork,
@@ -33,6 +33,7 @@ import type { RalphExit } from "../errors/RalphExit";
 import { failWithMessage } from "../errors/RalphExit";
 
 const ralphFileRoles = Object.keys(ralphFileNames) as ReadonlyArray<RalphFileRole>;
+const initFileNames = Object.values(phaseFileNames);
 
 const ralphFileFlags: Record<RalphFileRole, string> = {
   checklist: "--checklist",
@@ -183,33 +184,12 @@ export class RalphWorkspace extends Context.Service<
       const readTemplateFiles = Effect.fn("RalphWorkspace.readTemplateFiles")(function* () {
         const templateDirectory = yield* resolveTemplateDirectory();
 
-        const checklist = yield* fileSystem
-          .readFileString(path.join(templateDirectory, ralphFileNames.checklist))
-          .pipe(
-            Effect.catch(() =>
-              failWithMessage(`Missing bundled template: ${ralphFileNames.checklist}`),
-            ),
-          );
-        const instructions = yield* fileSystem
-          .readFileString(path.join(templateDirectory, ralphFileNames.instructions))
-          .pipe(
-            Effect.catch(() =>
-              failWithMessage(`Missing bundled template: ${ralphFileNames.instructions}`),
-            ),
-          );
-        const progress = yield* fileSystem
-          .readFileString(path.join(templateDirectory, ralphFileNames.progress))
-          .pipe(
-            Effect.catch(() =>
-              failWithMessage(`Missing bundled template: ${ralphFileNames.progress}`),
-            ),
-          );
-
-        return {
-          checklist,
-          instructions,
-          progress,
-        } satisfies Record<RalphFileRole, string>;
+        return yield* Effect.forEach(initFileNames, (fileName) =>
+          fileSystem.readFileString(path.join(templateDirectory, fileName)).pipe(
+            Effect.map((content) => ({ fileName, content })),
+            Effect.catch(() => failWithMessage(`Missing bundled template: ${fileName}`)),
+          ),
+        );
       });
 
       const resolveRuntimePath = (
@@ -245,33 +225,24 @@ export class RalphWorkspace extends Context.Service<
         yield* validateInitTarget(targetPath);
 
         const templates = yield* readTemplateFiles();
-        const targetFiles = {
-          checklist: path.join(targetPath, ralphFileNames.checklist),
-          instructions: path.join(targetPath, ralphFileNames.instructions),
-          progress: path.join(targetPath, ralphFileNames.progress),
-        } satisfies RalphFilePaths;
+        const targetFiles = templates.map(({ fileName, content }) => ({
+          content,
+          path: path.join(targetPath, fileName),
+        }));
 
-        yield* Effect.forEach(
-          ralphFileRoles,
-          (role) => validateWritableTargetFile(targetFiles[role]),
-          {
-            discard: true,
-          },
-        );
-        yield* Effect.forEach(ralphFileRoles, (role) => backupExistingFile(targetFiles[role]), {
+        yield* Effect.forEach(targetFiles, ({ path }) => validateWritableTargetFile(path), {
+          discard: true,
+        });
+        yield* Effect.forEach(targetFiles, ({ path }) => backupExistingFile(path), {
           discard: true,
         });
         yield* Effect.forEach(
-          ralphFileRoles,
-          (role) =>
+          targetFiles,
+          ({ content, path }) =>
             fileSystem
-              .writeFileString(targetFiles[role], templates[role])
-              .pipe(
-                Effect.catch(() => failWithMessage(`Could not write file: ${targetFiles[role]}`)),
-              ),
-          {
-            discard: true,
-          },
+              .writeFileString(path, content)
+              .pipe(Effect.catch(() => failWithMessage(`Could not write file: ${path}`))),
+          { discard: true },
         );
       });
 
@@ -380,17 +351,6 @@ export class RalphWorkspace extends Context.Service<
         );
       });
 
-      const phaseFileName = (role: PhaseRole): string => {
-        switch (role) {
-          case "BeforeWork":
-            return "BEFORE_WORK.md";
-          case "Work":
-            return "WORK.md";
-          case "AfterWork":
-            return "AFTER_WORK.md";
-        }
-      };
-
       const resolveRalphDirectory = Effect.fnUntraced(function* (
         input: Option.Option<string>,
         workingDirectory: string,
@@ -433,7 +393,7 @@ export class RalphWorkspace extends Context.Service<
               : Option.some({
                   origin: "RalphDirectory",
                   role,
-                  path: path.join(ralphDirectory, phaseFileName(role)),
+                  path: path.join(ralphDirectory, phaseFileNames[role]),
                 }),
           onSome: (rawPath) =>
             Option.some({

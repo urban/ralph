@@ -21,6 +21,6 @@ const commandInit = Command.make(
     ),
   },
   handler,
-).pipe(Command.withDescription("Write bundled Ralph template files"));
+).pipe(Command.withDescription("Write empty before, work, and after phase files"));
 
 export { commandInit };

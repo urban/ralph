@@ -78,68 +78,83 @@ const expectFailureMessage = (result: Exit.Exit<unknown, unknown>, message: stri
 };
 
 layer(workspaceLayer)("RalphWorkspace", (it) => {
-  it.effect("init writes Ralph files into the launch directory", () =>
-    Effect.gen(function* () {
-      const workspace = yield* RalphWorkspace;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const tempDirectory = yield* makeTempDirectory();
-
-      yield* withWorkingDirectory(tempDirectory, workspace.init(Option.none()));
-
-      const checklist = yield* fileSystem.readFileString(join(tempDirectory, "CHECKLIST.md"));
-      const instructions = yield* fileSystem.readFileString(join(tempDirectory, "INSTRUCTIONS.md"));
-      const progress = yield* fileSystem.readFileString(join(tempDirectory, "PROGRESS.md"));
-
-      expect(checklist.length).toBeGreaterThan(0);
-      expect(instructions.length).toBeGreaterThan(0);
-      expect(progress.length).toBeGreaterThan(0);
-    }),
-  );
-
-  it.effect("init creates backups before overwrite", () =>
+  it.effect("init creates exactly three empty phase files from the launch directory", () =>
     Effect.gen(function* () {
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
       const projectDirectory = join(tempDirectory, "project");
 
-      yield* fileSystem.makeDirectory(projectDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(join(projectDirectory, "CHECKLIST.md"), "old checklist\n");
-      yield* fileSystem.writeFileString(
-        join(projectDirectory, "INSTRUCTIONS.md"),
-        "old instructions\n",
+      yield* withWorkingDirectory(tempDirectory, workspace.init(Option.some("./project")));
+
+      expect([...(yield* fileSystem.readDirectory(projectDirectory))].sort()).toEqual([
+        "AFTER_WORK.md",
+        "BEFORE_WORK.md",
+        "WORK.md",
+      ]);
+      expect(yield* fileSystem.readFileString(join(projectDirectory, "BEFORE_WORK.md"))).toBe("");
+      expect(yield* fileSystem.readFileString(join(projectDirectory, "WORK.md"))).toBe("");
+      expect(yield* fileSystem.readFileString(join(projectDirectory, "AFTER_WORK.md"))).toBe("");
+
+      const blankWork = yield* withWorkingDirectory(
+        tempDirectory,
+        Effect.flip(
+          prepareSnapshot(
+            workspace,
+            makeOnceSequenceInput({
+              cwd: Option.some("./project"),
+              ralphDir: Option.some("."),
+            }),
+          ),
+        ),
       );
-      yield* fileSystem.writeFileString(join(projectDirectory, "PROGRESS.md"), "old progress\n");
+
+      const canonicalProjectDirectory = yield* fileSystem.realPath(projectDirectory);
+      expect(blankWork._tag).toBe("BlankWork");
+      expect(blankWork.message).toBe(
+        `Work instructions are required; work file is blank: ${join(canonicalProjectDirectory, "WORK.md")}`,
+      );
+    }),
+  );
+
+  it.effect("init backs up every phase file before replacing it with an empty file", () =>
+    Effect.gen(function* () {
+      const workspace = yield* RalphWorkspace;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const tempDirectory = yield* makeTempDirectory();
+      const projectDirectory = join(tempDirectory, "project");
+      const originals: ReadonlyArray<readonly [string, string]> = [
+        ["BEFORE_WORK.md", "old before\n"],
+        ["WORK.md", "old work\n"],
+        ["AFTER_WORK.md", "old after\n"],
+      ];
+
+      yield* fileSystem.makeDirectory(projectDirectory, { recursive: true });
+      yield* Effect.forEach(
+        originals,
+        ([fileName, content]) =>
+          fileSystem.writeFileString(join(projectDirectory, fileName), content),
+        { discard: true },
+      );
 
       yield* withWorkingDirectory(tempDirectory, workspace.init(Option.some("./project")));
 
       const files = yield* fileSystem.readDirectory(projectDirectory);
-      const checklistBackup = files.find((fileName) => fileName.startsWith("CHECKLIST.md.bak."));
-      const instructionsBackup = files.find((fileName) =>
-        fileName.startsWith("INSTRUCTIONS.md.bak."),
-      );
-      const progressBackup = files.find((fileName) => fileName.startsWith("PROGRESS.md.bak."));
+      yield* Effect.forEach(
+        originals,
+        ([fileName, content]) =>
+          Effect.gen(function* () {
+            const backup = files.find((candidate) => candidate.startsWith(`${fileName}.bak.`));
+            expect(backup).toBeDefined();
+            expect(yield* fileSystem.readFileString(join(projectDirectory, fileName))).toBe("");
 
-      expect(checklistBackup).toBeDefined();
-      expect(instructionsBackup).toBeDefined();
-      expect(progressBackup).toBeDefined();
-
-      if (
-        checklistBackup === undefined ||
-        instructionsBackup === undefined ||
-        progressBackup === undefined
-      ) {
-        return;
-      }
-
-      expect(yield* fileSystem.readFileString(join(projectDirectory, checklistBackup))).toBe(
-        "old checklist\n",
-      );
-      expect(yield* fileSystem.readFileString(join(projectDirectory, instructionsBackup))).toBe(
-        "old instructions\n",
-      );
-      expect(yield* fileSystem.readFileString(join(projectDirectory, progressBackup))).toBe(
-        "old progress\n",
+            if (backup !== undefined) {
+              expect(yield* fileSystem.readFileString(join(projectDirectory, backup))).toBe(
+                content,
+              );
+            }
+          }),
+        { discard: true },
       );
     }),
   );

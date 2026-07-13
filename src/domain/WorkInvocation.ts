@@ -77,6 +77,12 @@ export const PhaseRole = Schema.Literals(["BeforeWork", "Work", "AfterWork"]).an
 export type PhaseRole = typeof PhaseRole.Type;
 export type OptionalPhaseRole = Exclude<PhaseRole, "Work">;
 
+export const phaseFileNames: Readonly<Record<PhaseRole, string>> = {
+  BeforeWork: "BEFORE_WORK.md",
+  Work: "WORK.md",
+  AfterWork: "AFTER_WORK.md",
+};
+
 export type PhaseSource<Role extends PhaseRole = PhaseRole> =
   | { readonly origin: "Explicit"; readonly role: Role; readonly path: string }
   | { readonly origin: "RalphDirectory"; readonly role: Role; readonly path: string };
