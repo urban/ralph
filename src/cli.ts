@@ -11,6 +11,7 @@ import { commandLoop } from "./commands/loop";
 import { commandOnce } from "./commands/once";
 import { CodexRunner } from "./services/CodexRunner";
 import { HostTools } from "./services/HostTools";
+import { RalphRunner } from "./services/RalphRunner";
 import { RalphWorkspace } from "./services/RalphWorkspace";
 
 const cli = Command.make("ralph").pipe(
@@ -18,12 +19,15 @@ const cli = Command.make("ralph").pipe(
   Command.withSubcommands([commandInit, commandOnce, commandLoop]),
 );
 
+const ServiceLayer = Layer.mergeAll(CodexRunner.layer, HostTools.layer, RalphWorkspace.layer).pipe(
+  Layer.provideMerge(BunServices.layer),
+);
+
 const MainLayer = Layer.mergeAll(
-  CodexRunner.layer,
-  HostTools.layer,
-  RalphWorkspace.layer,
+  ServiceLayer,
+  RalphRunner.layer.pipe(Layer.provide(ServiceLayer)),
   Logger.layer([cliLogger]),
-).pipe(Layer.provideMerge(BunServices.layer));
+);
 
 const program = cli.pipe(Command.run({ version: pkg.version }), Effect.provide(MainLayer));
 

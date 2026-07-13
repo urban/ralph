@@ -112,6 +112,11 @@ export class CodexTerminationError extends Schema.TaggedErrorClass<CodexTerminat
   { message: Schema.String },
 ) {}
 
+export class OperatorOutputError extends Schema.TaggedErrorClass<OperatorOutputError>()(
+  "OperatorOutputError",
+  { message: Schema.String },
+) {}
+
 export type CodexInvocationError =
   | CodexSpawnError
   | CodexStreamError
