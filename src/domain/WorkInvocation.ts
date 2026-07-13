@@ -56,6 +56,11 @@ export interface LoopFlagsInput extends OnceFlagsInput {
   readonly iterations: IterationLimit;
 }
 
+export class LoopExhausted extends Schema.TaggedErrorClass<LoopExhausted>()("LoopExhausted", {
+  iterations: IterationLimit,
+  message: Schema.String,
+}) {}
+
 export interface OnceSequenceInput {
   readonly before: Option.Option<string>;
   readonly work: Option.Option<string>;

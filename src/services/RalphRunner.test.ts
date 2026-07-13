@@ -431,7 +431,12 @@ describe("RalphRunner.runLoop", () => {
                     Ref.update(observedByWork, (observed) => [...observed, value]),
                   ),
                 );
-            return coordinate.pipe(Effect.andThen(invocationComplete()));
+            return coordinate.pipe(
+              Effect.as({
+                invocationComplete: true,
+                workflowComplete: request.prompt === "Work iteration 3.",
+              }),
+            );
           },
           { snapshotForCall },
         );
@@ -457,7 +462,59 @@ describe("RalphRunner.runLoop", () => {
           (yield* readOutput(harness.output)).match(/=== Iteration \d+ ===/g),
           ["=== Iteration 1 ===", "=== Iteration 2 ===", "=== Iteration 3 ==="],
         );
+        assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+          "Ralph loop succeeded: workflow complete after 3 iterations.",
+        ]);
       }),
+  );
+
+  it.effect("stops remaining phases and iterations when any phase completes the workflow", () =>
+    Effect.gen(function* () {
+      const scenarios: ReadonlyArray<{
+        readonly completingPrompt: string;
+        readonly expectedPrompts: ReadonlyArray<string>;
+      }> = [
+        {
+          completingPrompt: "Prepare the work.",
+          expectedPrompts: ["Prepare the work."],
+        },
+        {
+          completingPrompt: "Do the work.",
+          expectedPrompts: ["Prepare the work.", "Do the work."],
+        },
+        {
+          completingPrompt: "Verify the work.",
+          expectedPrompts: ["Prepare the work.", "Do the work.", "Verify the work."],
+        },
+      ];
+
+      yield* Effect.forEach(
+        scenarios,
+        (scenario) =>
+          Effect.gen(function* () {
+            const harness = yield* makeHarness(
+              (request) =>
+                Effect.succeed({
+                  invocationComplete: true,
+                  workflowComplete: request.prompt === scenario.completingPrompt,
+                }),
+              { snapshot: explicitThreePhaseSnapshot },
+            );
+
+            yield* harness.runLoop(loopInput());
+
+            assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 1);
+            assert.deepStrictEqual(
+              yield* Ref.get(harness.invocationCalls),
+              scenario.expectedPrompts,
+            );
+            assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+              "Ralph loop succeeded: workflow complete after 1 iteration.",
+            ]);
+          }),
+        { discard: true },
+      );
+    }),
   );
 
   it.effect("short-circuits all later work when the shared phase sequence fails", () =>
@@ -480,6 +537,73 @@ describe("RalphRunner.runLoop", () => {
         "Prepare the work.",
         "Do the work.",
       ]);
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph loop failed: idle timeout",
+      ]);
+    }),
+  );
+
+  it.effect("returns a distinct typed failure when the iteration limit is exhausted", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(invocationComplete);
+
+      const result = yield* harness.runLoop(loopInput()).pipe(Effect.result);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure._tag, "LoopExhausted");
+        if (result.failure._tag === "LoopExhausted") {
+          assert.strictEqual(result.failure.iterations, 3);
+        }
+      }
+      assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 3);
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph loop failed: Ralph loop exhausted after 3 iterations without workflow completion.",
+      ]);
+    }),
+  );
+
+  it.effect("notifies once when loop input validation fails before execution", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(invocationComplete);
+
+      const result = yield* harness
+        .runLoop(loopInput({ idleTimeout: "30m", invocationTimeout: "5m" }))
+        .pipe(Effect.result);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure._tag, "InvalidTimeoutOrder");
+      }
+      assert.strictEqual(yield* Ref.get(harness.workspaceCalls), 0);
+      assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 0);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), []);
+      assert.strictEqual((yield* Ref.get(harness.notifications)).length, 1);
+    }),
+  );
+
+  it.effect("preserves loop completion and exhaustion when notification defects", () =>
+    Effect.gen(function* () {
+      const successHarness = yield* makeHarness(
+        () => Effect.succeed({ invocationComplete: true, workflowComplete: true }),
+        { notificationDefects: true },
+      );
+      const exhaustedHarness = yield* makeHarness(invocationComplete, {
+        notificationDefects: true,
+      });
+
+      const success = yield* successHarness.runLoop(loopInput()).pipe(Effect.result);
+      const exhausted = yield* exhaustedHarness
+        .runLoop(loopInput({ iterations: IterationLimit.make(1) }))
+        .pipe(Effect.result);
+
+      assert.isTrue(Result.isSuccess(success));
+      assert.isTrue(Result.isFailure(exhausted));
+      if (Result.isFailure(exhausted)) {
+        assert.strictEqual(exhausted.failure._tag, "LoopExhausted");
+      }
+      assert.strictEqual((yield* Ref.get(successHarness.notifications)).length, 1);
+      assert.strictEqual((yield* Ref.get(exhaustedHarness.notifications)).length, 1);
     }),
   );
 });

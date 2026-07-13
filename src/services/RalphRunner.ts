@@ -11,10 +11,14 @@ import type {
   PreparedWorkflow,
   TimeoutInputError,
 } from "../domain/WorkInvocation";
-import { type CodexInvocationError, OperatorOutputError } from "../domain/WorkInvocation";
+import {
+  type CodexInvocationError,
+  decodeTimeoutPolicy,
+  LoopExhausted,
+  OperatorOutputError,
+} from "../domain/WorkInvocation";
 import type { PhaseInputError } from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
-import { decodeTimeoutPolicy } from "../domain/WorkInvocation";
 import { CodexRunner } from "./CodexRunner";
 import { HostTools } from "./HostTools";
 import { RalphWorkspace } from "./RalphWorkspace";
@@ -26,11 +30,13 @@ export type RunOnceError =
   | CodexInvocationError
   | OperatorOutputError;
 
+export type RunLoopError = RunOnceError | LoopExhausted;
+
 export class RalphRunner extends Context.Service<
   RalphRunner,
   {
     runOnce(input: OnceFlagsInput): Effect.Effect<void, RunOnceError>;
-    runLoop(input: LoopFlagsInput): Effect.Effect<void, RunOnceError>;
+    runLoop(input: LoopFlagsInput): Effect.Effect<void, RunLoopError>;
   }
 >()("ralph-effect/services/RalphRunner") {
   static readonly layer = Layer.effect(
@@ -175,13 +181,37 @@ export class RalphRunner extends Context.Service<
         return yield* result.failure;
       });
 
-      const runLoop = Effect.fn("RalphRunner.runLoop")(function* (input: LoopFlagsInput) {
-        const prepared = yield* prepareWorkflow(input);
+      const iterationCountLabel = (count: number): string =>
+        `${count} ${count === 1 ? "iteration" : "iterations"}`;
 
-        for (let iteration = 1; iteration <= input.iterations; iteration += 1) {
-          yield* writeOperatorOutput(`=== Iteration ${iteration} ===\n`);
-          yield* runIteration(prepared);
+      const runLoop = Effect.fn("RalphRunner.runLoop")(function* (input: LoopFlagsInput) {
+        const execution = Effect.gen(function* () {
+          const prepared = yield* prepareWorkflow(input);
+
+          for (let iteration = 1; iteration <= input.iterations; iteration += 1) {
+            yield* writeOperatorOutput(`=== Iteration ${iteration} ===\n`);
+            const workflowComplete = yield* runIteration(prepared);
+            if (workflowComplete) {
+              return iteration;
+            }
+          }
+
+          return yield* new LoopExhausted({
+            iterations: input.iterations,
+            message: `Ralph loop exhausted after ${iterationCountLabel(input.iterations)} without workflow completion.`,
+          });
+        });
+        const result = yield* execution.pipe(Effect.result);
+
+        if (Result.isSuccess(result)) {
+          yield* notifyBestEffort(
+            `Ralph loop succeeded: workflow complete after ${iterationCountLabel(result.success)}.`,
+          );
+          return;
         }
+
+        yield* notifyBestEffort(`Ralph loop failed: ${result.failure.message}`);
+        return yield* result.failure;
       });
 
       return RalphRunner.of({ runLoop, runOnce });

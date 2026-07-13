@@ -4,6 +4,8 @@ import { Effect, Option, Ref, Result } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import type { LoopFlagsInput } from "../domain/WorkInvocation";
+import { IterationLimit, LoopExhausted } from "../domain/WorkInvocation";
+import { RalphExit } from "../errors/RalphExit";
 import { RalphRunner } from "../services/RalphRunner";
 import { commandLoop } from "./loop";
 
@@ -65,6 +67,33 @@ describe("loop command", () => {
       const inputs = yield* Ref.get(captured);
       assert.strictEqual(inputs.length, 1);
       assert.strictEqual(inputs[0]?.iterations, 3);
+    }),
+  );
+
+  it.effect("maps typed loop exhaustion to a nonzero process exit", () =>
+    Effect.gen(function* () {
+      const exhausted = new LoopExhausted({
+        iterations: IterationLimit.make(10),
+        message: "Loop exhausted.",
+      });
+      const runner = RalphRunner.of({
+        runOnce: () => Effect.die("once is not part of loop parsing"),
+        runLoop: () => Effect.fail(exhausted),
+      });
+
+      const result = yield* runLoop(["--work", "./WORK.md"]).pipe(
+        Effect.provideService(RalphRunner, runner),
+        Effect.provide(BunServices.layer),
+        Effect.result,
+      );
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.isTrue(result.failure instanceof RalphExit);
+        if (result.failure instanceof RalphExit) {
+          assert.strictEqual(result.failure.exitCode, 1);
+        }
+      }
     }),
   );
 
