@@ -26,14 +26,22 @@ const invocationComplete = (): Effect.Effect<InvocationOutcome> =>
 const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
   invoke: (request: InvocationRequest) => Effect.Effect<InvocationOutcome, E>,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const invocations = yield* Ref.make<Array<string>>([]);
   const notifications = yield* Ref.make<Array<string>>([]);
   const output = yield* Ref.make<Array<Uint8Array>>([]);
   const toBytes = (chunk: string | Uint8Array) =>
     typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+  const readInstructions = (request: InvocationRequest) =>
+    fileSystem
+      .readFileString(request.instructionsPath)
+      .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
   const codexRunner = CodexRunner.of({
     runInvocation: (request) =>
-      Ref.update(invocations, (prompts) => [...prompts, request.prompt]).pipe(
+      readInstructions(request).pipe(
+        Effect.flatMap((instructions) =>
+          Ref.update(invocations, (prompts) => [...prompts, instructions]),
+        ),
         Effect.andThen(invoke(request)),
       ),
   });
@@ -102,21 +110,29 @@ describe("once three-phase workflow", () => {
         work: "Explicit work v1.\n",
         after: "Explicit after v1.\n",
       });
+      const readInstructions = (request: InvocationRequest) =>
+        fileSystem
+          .readFileString(request.instructionsPath)
+          .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
       const harness = yield* makeHarness((request) =>
-        request.prompt === "Explicit before.\n"
-          ? fileSystem
-              .writeFileString(join(explicitSources, "WORK.md"), "Explicit work v2.\n")
-              .pipe(
-                Effect.andThen(
-                  fileSystem.writeFileString(
-                    join(explicitSources, "AFTER_WORK.md"),
-                    "Explicit after v2.\n",
-                  ),
-                ),
-                Effect.andThen(invocationComplete()),
-                Effect.catch(() => Effect.die("Could not mutate phase fixtures")),
-              )
-          : invocationComplete(),
+        readInstructions(request).pipe(
+          Effect.flatMap((instructions) =>
+            instructions === "Explicit before.\n"
+              ? fileSystem
+                  .writeFileString(join(explicitSources, "WORK.md"), "Explicit work v2.\n")
+                  .pipe(
+                    Effect.andThen(
+                      fileSystem.writeFileString(
+                        join(explicitSources, "AFTER_WORK.md"),
+                        "Explicit after v2.\n",
+                      ),
+                    ),
+                    Effect.andThen(invocationComplete()),
+                  )
+              : invocationComplete(),
+          ),
+          Effect.catch(() => Effect.die("Could not mutate phase fixtures")),
+        ),
       );
       const args = [
         "--cwd",
@@ -146,6 +162,12 @@ describe("once three-phase workflow", () => {
       assert.strictEqual(output.match(/=== Before work ===/g)?.length, 2);
       assert.strictEqual(output.match(/=== Work ===/g)?.length, 2);
       assert.strictEqual(output.match(/=== After work ===/g)?.length, 2);
+      assert.deepStrictEqual(
+        (yield* fileSystem.readDirectory(workspace)).filter((name) =>
+          name.startsWith(".ralph-snapshot-"),
+        ),
+        [],
+      );
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph once succeeded: invocation complete.",
         "Ralph once succeeded: invocation complete.",
@@ -195,16 +217,26 @@ describe("once three-phase workflow", () => {
         work: "Work.\n",
         after: "Verify.\n",
       });
+      const readInstructions = (request: InvocationRequest) =>
+        fileSystem
+          .readFileString(request.instructionsPath)
+          .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
       const completionHarness = yield* makeHarness((request) =>
-        Effect.succeed({
-          invocationComplete: true,
-          workflowComplete: request.prompt === "Prepare.\n",
-        }),
+        readInstructions(request).pipe(
+          Effect.map((instructions) => ({
+            invocationComplete: true,
+            workflowComplete: instructions === "Prepare.\n",
+          })),
+        ),
       );
       const failureHarness = yield* makeHarness((request) =>
-        request.prompt === "Work.\n"
-          ? Effect.fail(new CodexExitError({ exitCode: 17, message: "work failed" }))
-          : invocationComplete(),
+        readInstructions(request).pipe(
+          Effect.flatMap((instructions) =>
+            instructions === "Work.\n"
+              ? Effect.fail(new CodexExitError({ exitCode: 17, message: "work failed" }))
+              : invocationComplete(),
+          ),
+        ),
       );
       const args = ["--cwd", workspace, "--ralph-dir", "./.ralph"];
 

@@ -22,6 +22,8 @@ import {
   phaseInputLabel,
   PhaseOutsideWorkingDirectory,
   PhasePathNotFile,
+  SnapshotDirectoryUnavailable,
+  SnapshotWriteFailed,
 } from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
 import { failWithMessage } from "../errors/RalphExit";
@@ -29,6 +31,16 @@ import { failWithMessage } from "../errors/RalphExit";
 const initFileNames = Object.values(phaseFileNames);
 
 const formatBackupTimestamp = () => new Date().toISOString().replace(/[-:.]/g, "");
+
+interface PendingReadyPhaseSnapshot<Role extends PhaseRole = PhaseRole> {
+  readonly _tag: "Ready";
+  readonly role: Role;
+  readonly contents: string;
+}
+
+type PendingOptionalPhaseSnapshot<Role extends OptionalPhaseRole> =
+  | PendingReadyPhaseSnapshot<Role>
+  | { readonly _tag: "Skipped"; readonly role: Role; readonly reason: "Missing" | "Blank" };
 
 export class RalphWorkspace extends Context.Service<
   RalphWorkspace,
@@ -38,6 +50,7 @@ export class RalphWorkspace extends Context.Service<
     snapshotIteration(
       workflow: PreparedWorkflow,
     ): Effect.Effect<IterationSnapshot, PhaseInputError>;
+    cleanupIterationSnapshot(snapshot: IterationSnapshot): Effect.Effect<void>;
   }
 >()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
@@ -261,10 +274,13 @@ export class RalphWorkspace extends Context.Service<
             }),
         });
 
-      const readPhasePrompt = Effect.fnUntraced(function* (
-        source: PhaseSource,
+      const readPhaseContents = Effect.fnUntraced(function* <Role extends PhaseRole>(
+        source: PhaseSource<Role>,
         workingDirectory: string,
-      ) {
+      ): Effect.fn.Return<
+        { readonly canonicalPath: string; readonly contents: string },
+        PhaseInputError
+      > {
         const label = phaseInputLabel(source.role);
         const info = yield* fileSystem.stat(source.path).pipe(
           Effect.mapError(
@@ -322,7 +338,10 @@ export class RalphWorkspace extends Context.Service<
         );
 
         return yield* Effect.try({
-          try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          try: () => ({
+            canonicalPath,
+            contents: new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          }),
           catch: () =>
             new PhaseFileUnreadable({
               role: source.role,
@@ -336,7 +355,7 @@ export class RalphWorkspace extends Context.Service<
         role: Role,
         sourceOption: Option.Option<PhaseSource<Role>>,
         workingDirectory: string,
-      ): Effect.fn.Return<OptionalPhaseSnapshot<Role>, PhaseInputError> {
+      ): Effect.fn.Return<PendingOptionalPhaseSnapshot<Role>, PhaseInputError> {
         if (Option.isNone(sourceOption)) {
           return { _tag: "Skipped", role, reason: "Missing" };
         }
@@ -358,25 +377,74 @@ export class RalphWorkspace extends Context.Service<
           }
         }
 
-        const prompt = yield* readPhasePrompt(source, workingDirectory);
-        return prompt.trim().length === 0
+        const phase = yield* readPhaseContents(source, workingDirectory);
+        return phase.contents.trim().length === 0
           ? { _tag: "Skipped", role, reason: "Blank" }
-          : { _tag: "Ready", role, prompt };
+          : { _tag: "Ready", role, contents: phase.contents };
       });
 
       const snapshotWorkPhase = Effect.fnUntraced(function* (
         source: PhaseSource<"Work">,
         workingDirectory: string,
-      ): Effect.fn.Return<ReadyPhaseSnapshot<"Work">, PhaseInputError> {
-        const prompt = yield* readPhasePrompt(source, workingDirectory);
-        if (prompt.trim().length === 0) {
+      ): Effect.fn.Return<PendingReadyPhaseSnapshot<"Work">, PhaseInputError> {
+        const phase = yield* readPhaseContents(source, workingDirectory);
+        if (phase.contents.trim().length === 0) {
           return yield* new BlankWork({
-            path: source.path,
-            message: `Work instructions are required; work file is blank: ${source.path}`,
+            path: phase.canonicalPath,
+            message: `Work instructions are required; work file is blank: ${phase.canonicalPath}`,
           });
         }
 
-        return { _tag: "Ready", role: "Work", prompt };
+        return { _tag: "Ready", role: "Work", contents: phase.contents };
+      });
+
+      const createSnapshotDirectory = Effect.fnUntraced(function* (workingDirectory: string) {
+        return yield* fileSystem
+          .makeTempDirectory({
+            directory: workingDirectory,
+            prefix: ".ralph-snapshot-",
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new SnapshotDirectoryUnavailable({
+                  path: workingDirectory,
+                  message: `Could not create iteration snapshot directory in ${workingDirectory}`,
+                }),
+            ),
+          );
+      });
+
+      const writeSnapshotPhase = Effect.fnUntraced(function* <Role extends PhaseRole>(
+        snapshotDirectory: string,
+        phase: PendingReadyPhaseSnapshot<Role>,
+      ): Effect.fn.Return<ReadyPhaseSnapshot<Role>, SnapshotWriteFailed> {
+        const snapshotPath = path.join(snapshotDirectory, phaseFileNames[phase.role]);
+        yield* fileSystem.writeFileString(snapshotPath, phase.contents).pipe(
+          Effect.mapError(
+            () =>
+              new SnapshotWriteFailed({
+                role: phase.role,
+                path: snapshotPath,
+                message: `Could not write ${phaseInputLabel(phase.role)} snapshot: ${snapshotPath}`,
+              }),
+          ),
+        );
+
+        return { _tag: "Ready", role: phase.role, snapshotPath };
+      });
+
+      const materializeOptionalSnapshot = Effect.fnUntraced(function* <
+        Role extends OptionalPhaseRole,
+      >(
+        snapshotDirectory: string,
+        phase: PendingOptionalPhaseSnapshot<Role>,
+      ): Effect.fn.Return<OptionalPhaseSnapshot<Role>, SnapshotWriteFailed> {
+        if (phase._tag === "Skipped") {
+          return phase;
+        }
+
+        return yield* writeSnapshotPhase(snapshotDirectory, phase);
       });
 
       const prepareWorkflow = Effect.fnUntraced(function* (input: OnceSequenceInput) {
@@ -412,22 +480,36 @@ export class RalphWorkspace extends Context.Service<
       });
 
       const snapshotIteration = Effect.fnUntraced(function* (workflow: PreparedWorkflow) {
-        const before = yield* snapshotOptionalPhase(
+        const pendingBefore = yield* snapshotOptionalPhase(
           "BeforeWork",
           workflow.sources.before,
           workflow.workingDirectory,
         );
-        const work = yield* snapshotWorkPhase(workflow.sources.work, workflow.workingDirectory);
-        const after = yield* snapshotOptionalPhase(
+        const pendingWork = yield* snapshotWorkPhase(
+          workflow.sources.work,
+          workflow.workingDirectory,
+        );
+        const pendingAfter = yield* snapshotOptionalPhase(
           "AfterWork",
           workflow.sources.after,
           workflow.workingDirectory,
         );
+        const snapshotDirectory = yield* createSnapshotDirectory(workflow.workingDirectory);
+        const before = yield* materializeOptionalSnapshot(snapshotDirectory, pendingBefore);
+        const work = yield* writeSnapshotPhase(snapshotDirectory, pendingWork);
+        const after = yield* materializeOptionalSnapshot(snapshotDirectory, pendingAfter);
 
-        return { before, work, after } satisfies IterationSnapshot;
+        return { snapshotDirectory, before, work, after } satisfies IterationSnapshot;
+      });
+
+      const cleanupIterationSnapshot = Effect.fnUntraced(function* (snapshot: IterationSnapshot) {
+        yield* fileSystem
+          .remove(snapshot.snapshotDirectory, { recursive: true })
+          .pipe(Effect.catch(() => Effect.void));
       });
 
       return RalphWorkspace.of({
+        cleanupIterationSnapshot,
         init,
         prepareWorkflow,
         snapshotIteration,

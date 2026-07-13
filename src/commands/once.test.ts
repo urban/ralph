@@ -136,10 +136,16 @@ it.effect("once composes parsed input through the fake Codex boundary", () =>
         }),
       snapshotIteration: () =>
         Effect.succeed({
+          snapshotDirectory: "/workspace/.ralph-snapshot-test",
           before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-          work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+          work: {
+            _tag: "Ready",
+            role: "Work",
+            snapshotPath: "/workspace/.ralph-snapshot-test/WORK.md",
+          },
           after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
         }),
+      cleanupIterationSnapshot: () => Effect.void,
     });
     const hostTools = HostTools.of({
       commandExists: () => Effect.succeed(true),

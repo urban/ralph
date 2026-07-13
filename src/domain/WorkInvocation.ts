@@ -90,7 +90,7 @@ export type PhaseSource<Role extends PhaseRole = PhaseRole> =
 export interface ReadyPhaseSnapshot<Role extends PhaseRole = PhaseRole> {
   readonly _tag: "Ready";
   readonly role: Role;
-  readonly prompt: string;
+  readonly snapshotPath: string;
 }
 
 export interface SkippedPhaseSnapshot<Role extends OptionalPhaseRole = OptionalPhaseRole> {
@@ -106,6 +106,7 @@ export type OptionalPhaseSnapshot<Role extends OptionalPhaseRole> =
 export type PhaseSnapshot = ReadyPhaseSnapshot | SkippedPhaseSnapshot;
 
 export interface IterationSnapshot {
+  readonly snapshotDirectory: string;
   readonly before: OptionalPhaseSnapshot<"BeforeWork">;
   readonly work: ReadyPhaseSnapshot<"Work">;
   readonly after: OptionalPhaseSnapshot<"AfterWork">;
@@ -126,7 +127,7 @@ export interface PreparedWorkflow {
 
 export interface InvocationRequest {
   readonly workingDirectory: string;
-  readonly prompt: string;
+  readonly instructionsPath: string;
   readonly timeouts: TimeoutPolicy;
   readonly yolo: boolean;
 }

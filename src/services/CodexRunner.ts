@@ -27,6 +27,9 @@ type InvocationDecision =
 
 export const genericCompletionProtocol = `\n\nWhen you have successfully completed these instructions, emit exactly ${invocationCompletionMarker}. Do not emit this marker until the instructions are complete.`;
 
+export const renderInvocationPrompt = (instructionsPath: string): string =>
+  `Follow the instructions in this file:\n@${instructionsPath}${genericCompletionProtocol}`;
+
 const makeWorkInvocationCommand = (request: InvocationRequest) =>
   ChildProcess.make(
     "codex",
@@ -36,7 +39,7 @@ const makeWorkInvocationCommand = (request: InvocationRequest) =>
           "--dangerously-bypass-approvals-and-sandbox",
           "-C",
           request.workingDirectory,
-          `${request.prompt}${genericCompletionProtocol}`,
+          renderInvocationPrompt(request.instructionsPath),
         ]
       : [
           "exec",
@@ -45,7 +48,7 @@ const makeWorkInvocationCommand = (request: InvocationRequest) =>
           "workspace-write",
           "-C",
           request.workingDirectory,
-          `${request.prompt}${genericCompletionProtocol}`,
+          renderInvocationPrompt(request.instructionsPath),
         ],
     {
       cwd: request.workingDirectory,

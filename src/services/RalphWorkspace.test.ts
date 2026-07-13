@@ -3,7 +3,11 @@ import { expect, layer } from "@effect/vitest";
 import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option } from "effect";
 import { join } from "node:path";
 
-import type { OnceSequenceInput } from "../domain/WorkInvocation";
+import type {
+  IterationSnapshot,
+  OnceSequenceInput,
+  ReadyPhaseSnapshot,
+} from "../domain/WorkInvocation";
 import { RalphWorkspace } from "./RalphWorkspace";
 
 const workspaceLayer = RalphWorkspace.layer.pipe(Layer.provideMerge(BunServices.layer));
@@ -41,12 +45,34 @@ const makeOnceSequenceInput = (overrides: Partial<OnceSequenceInput> = {}): Once
   ...overrides,
 });
 
+const readReadySnapshot = Effect.fnUntraced(function* (phase: ReadyPhaseSnapshot) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.readFileString(phase.snapshotPath);
+});
+
+const describeIterationSnapshot = Effect.fnUntraced(function* (phases: IterationSnapshot) {
+  return {
+    snapshotDirectory: phases.snapshotDirectory,
+    before:
+      phases.before._tag === "Skipped"
+        ? phases.before
+        : { ...phases.before, contents: yield* readReadySnapshot(phases.before) },
+    work: { ...phases.work, contents: yield* readReadySnapshot(phases.work) },
+    after:
+      phases.after._tag === "Skipped"
+        ? phases.after
+        : { ...phases.after, contents: yield* readReadySnapshot(phases.after) },
+  };
+});
+
 const prepareSnapshot = Effect.fnUntraced(function* (
   workspace: RalphWorkspace["Service"],
   input: OnceSequenceInput,
 ) {
   const workflow = yield* workspace.prepareWorkflow(input);
-  const phases = yield* workspace.snapshotIteration(workflow);
+  const phases = yield* workspace
+    .snapshotIteration(workflow)
+    .pipe(Effect.flatMap(describeIterationSnapshot));
   return { ...workflow, phases };
 });
 
@@ -188,9 +214,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
           }),
         ),
       );
-      const firstSnapshot = yield* workspace.snapshotIteration(workflow);
+      const firstSnapshot = yield* workspace
+        .snapshotIteration(workflow)
+        .pipe(Effect.flatMap(describeIterationSnapshot));
       yield* fileSystem.writeFileString(workPath, "Changed after snapshot.\n");
-      const nextSnapshot = yield* workspace.snapshotIteration(workflow);
+      const nextSnapshot = yield* workspace
+        .snapshotIteration(workflow)
+        .pipe(Effect.flatMap(describeIterationSnapshot));
 
       expect(workflow.workingDirectory).toBe(yield* fileSystem.realPath(projectDirectory));
       expect(workflow.sources.work).toEqual({
@@ -198,8 +228,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         role: "Work",
         path: join(workflow.workingDirectory, "WORK.md"),
       });
-      expect(firstSnapshot.work.prompt).toBe("Do the approved work.\n");
-      expect(nextSnapshot.work.prompt).toBe("Changed after snapshot.\n");
+      expect(firstSnapshot.work.contents).toBe("Do the approved work.\n");
+      expect(nextSnapshot.work.contents).toBe("Changed after snapshot.\n");
       expect(workflow.yolo).toBe(true);
     }),
   );
@@ -227,19 +257,25 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         ),
       );
 
-      const currentSequence = yield* workspace.snapshotIteration(workflow);
+      const currentSequence = yield* workspace
+        .snapshotIteration(workflow)
+        .pipe(Effect.flatMap(describeIterationSnapshot));
       yield* fileSystem.writeFileString(afterPath, "Verify changed work.\n");
-      const nextSequence = yield* workspace.snapshotIteration(workflow);
+      const nextSequence = yield* workspace
+        .snapshotIteration(workflow)
+        .pipe(Effect.flatMap(describeIterationSnapshot));
 
       expect(currentSequence.after).toEqual({
         _tag: "Ready",
         role: "AfterWork",
-        prompt: "Verify original work.\n",
+        snapshotPath: expect.stringMatching(/AFTER_WORK\.md$/),
+        contents: "Verify original work.\n",
       });
       expect(nextSequence.after).toEqual({
         _tag: "Ready",
         role: "AfterWork",
-        prompt: "Verify changed work.\n",
+        snapshotPath: expect.stringMatching(/AFTER_WORK\.md$/),
+        contents: "Verify changed work.\n",
       });
     }),
   );
@@ -260,8 +296,14 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       );
 
       expect(prepared.phases).toEqual({
+        snapshotDirectory: expect.stringContaining(".ralph-snapshot-"),
         before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-        work: { _tag: "Ready", role: "Work", prompt: "Run from directory.\n" },
+        work: {
+          _tag: "Ready",
+          role: "Work",
+          snapshotPath: expect.stringMatching(/WORK\.md$/),
+          contents: "Run from directory.\n",
+        },
         after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
       });
     }),
@@ -302,9 +344,20 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       );
 
       expect(prepared.phases).toEqual({
+        snapshotDirectory: expect.stringContaining(".ralph-snapshot-"),
         before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
-        work: { _tag: "Ready", role: "Work", prompt: "Custom work.\n" },
-        after: { _tag: "Ready", role: "AfterWork", prompt: "Directory after.\n" },
+        work: {
+          _tag: "Ready",
+          role: "Work",
+          snapshotPath: expect.stringMatching(/WORK\.md$/),
+          contents: "Custom work.\n",
+        },
+        after: {
+          _tag: "Ready",
+          role: "AfterWork",
+          snapshotPath: expect.stringMatching(/AFTER_WORK\.md$/),
+          contents: "Directory after.\n",
+        },
       });
     }),
   );

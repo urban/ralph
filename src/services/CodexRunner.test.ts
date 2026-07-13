@@ -6,14 +6,14 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 
 import { invocationCompletionMarker, workflowCompletionMarker } from "../domain/CompletionMarkers";
 import type { InvocationRequest } from "../domain/WorkInvocation";
-import { CodexRunner, genericCompletionProtocol } from "./CodexRunner";
+import { CodexRunner, renderInvocationPrompt } from "./CodexRunner";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const request = (yolo = false): InvocationRequest => ({
   workingDirectory: "/workspace",
-  prompt: "Do one thing.",
+  instructionsPath: "/workspace/.ralph-snapshot-test/WORK.md",
   timeouts: {
     idle: Duration.minutes(5),
     invocation: Duration.minutes(30),
@@ -174,7 +174,10 @@ describe("CodexRunner.runInvocation", () => {
         "-C",
         "/workspace",
       ]);
-      assert.strictEqual(command.value.args.at(-1), `Do one thing.${genericCompletionProtocol}`);
+      assert.strictEqual(
+        command.value.args.at(-1),
+        renderInvocationPrompt("/workspace/.ralph-snapshot-test/WORK.md"),
+      );
     }),
   );
 

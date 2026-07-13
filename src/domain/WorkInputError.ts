@@ -47,6 +47,16 @@ export class PhaseOutsideWorkingDirectory extends Schema.TaggedErrorClass<PhaseO
   },
 ) {}
 
+export class SnapshotDirectoryUnavailable extends Schema.TaggedErrorClass<SnapshotDirectoryUnavailable>()(
+  "SnapshotDirectoryUnavailable",
+  PathField,
+) {}
+
+export class SnapshotWriteFailed extends Schema.TaggedErrorClass<SnapshotWriteFailed>()(
+  "SnapshotWriteFailed",
+  PhasePathField,
+) {}
+
 export type PhaseInputError =
   | MissingWorkSource
   | InvalidWorkingDirectory
@@ -55,7 +65,9 @@ export type PhaseInputError =
   | PhasePathNotFile
   | PhaseFileUnreadable
   | BlankWork
-  | PhaseOutsideWorkingDirectory;
+  | PhaseOutsideWorkingDirectory
+  | SnapshotDirectoryUnavailable
+  | SnapshotWriteFailed;
 
 export const phaseInputLabel = (role: PhaseRole): string => {
   switch (role) {

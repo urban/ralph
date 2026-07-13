@@ -103,7 +103,7 @@ For each iteration Ralph:
 3. runs the required work phase;
 4. runs after work when present and nonblank.
 
-The three phase prompts are immutable within an iteration. Changes to them take effect on the next loop iteration. Other repository files remain live: work can update an application file, checklist, or progress log and after work can observe that update in the same iteration.
+Ralph materializes ready phase files into an iteration-scoped internal snapshot directory under the working directory, then points Codex at those snapshot files. The three phase prompts are immutable within an iteration. Changes to them take effect on the next loop iteration. Other repository files remain live: work can update an application file, checklist, or progress log and after work can observe that update in the same iteration.
 
 `ralph once` performs one sequence. It succeeds after every executed phase completes, even when no phase declares the whole workflow complete.
 

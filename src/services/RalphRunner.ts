@@ -78,7 +78,7 @@ export class RalphRunner extends Context.Service<
         phase: Extract<PhaseSnapshot, { readonly _tag: "Ready" }>,
       ): InvocationRequest => ({
         workingDirectory: prepared.workingDirectory,
-        prompt: phase.prompt,
+        instructionsPath: phase.snapshotPath,
         timeouts: prepared.timeouts,
         yolo: prepared.yolo,
       });
@@ -153,8 +153,11 @@ export class RalphRunner extends Context.Service<
       });
 
       const runIteration = Effect.fnUntraced(function* (prepared: PreparedWorkflow) {
-        const snapshot = yield* workspace.snapshotIteration(prepared);
-        return yield* runSequence(prepared, snapshot);
+        return yield* Effect.acquireUseRelease(
+          workspace.snapshotIteration(prepared),
+          (snapshot) => runSequence(prepared, snapshot),
+          (snapshot) => workspace.cleanupIterationSnapshot(snapshot),
+        );
       });
 
       const runOnce = Effect.fn("RalphRunner.runOnce")(function* (input: OnceFlagsInput) {

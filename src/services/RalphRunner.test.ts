@@ -52,16 +52,40 @@ const prepared: PreparedWorkflow = {
   yolo: false,
 };
 
+const snapshotPaths = {
+  defaultWork: "/workspace/.ralph-snapshot-default/WORK.md",
+  explicit: {
+    before: "/workspace/.ralph-snapshot-explicit/BEFORE_WORK.md",
+    work: "/workspace/.ralph-snapshot-explicit/WORK.md",
+    after: "/workspace/.ralph-snapshot-explicit/AFTER_WORK.md",
+  },
+  iteration: (iteration: number) => ({
+    before: `/workspace/.ralph-snapshot-iteration-${iteration}/BEFORE_WORK.md`,
+    work: `/workspace/.ralph-snapshot-iteration-${iteration}/WORK.md`,
+    after: `/workspace/.ralph-snapshot-iteration-${iteration}/AFTER_WORK.md`,
+  }),
+} as const;
+
 const defaultSnapshot: IterationSnapshot = {
+  snapshotDirectory: "/workspace/.ralph-snapshot-default",
   before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
-  work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+  work: { _tag: "Ready", role: "Work", snapshotPath: snapshotPaths.defaultWork },
   after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
 };
 
 const explicitThreePhaseSnapshot: IterationSnapshot = {
-  before: { _tag: "Ready", role: "BeforeWork", prompt: "Prepare the work." },
-  work: { _tag: "Ready", role: "Work", prompt: "Do the work." },
-  after: { _tag: "Ready", role: "AfterWork", prompt: "Verify the work." },
+  snapshotDirectory: "/workspace/.ralph-snapshot-explicit",
+  before: {
+    _tag: "Ready",
+    role: "BeforeWork",
+    snapshotPath: snapshotPaths.explicit.before,
+  },
+  work: { _tag: "Ready", role: "Work", snapshotPath: snapshotPaths.explicit.work },
+  after: {
+    _tag: "Ready",
+    role: "AfterWork",
+    snapshotPath: snapshotPaths.explicit.after,
+  },
 };
 
 const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
@@ -93,7 +117,7 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   });
   const codexRunner = CodexRunner.of({
     runInvocation: (request) =>
-      Ref.update(invocationCalls, (prompts) => [...prompts, request.prompt]).pipe(
+      Ref.update(invocationCalls, (paths) => [...paths, request.instructionsPath]).pipe(
         Effect.andThen(invocation(request)),
       ),
   });
@@ -108,6 +132,7 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
           : options.snapshotForCall(call),
         call + 1,
       ]),
+    cleanupIterationSnapshot: () => Effect.void,
   });
   const hostTools = HostTools.of({
     commandExists: () => Effect.succeed(true),
@@ -169,9 +194,9 @@ describe("RalphRunner.runOnce", () => {
       yield* harness.run(input());
 
       assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
-        "Prepare the work.",
-        "Do the work.",
-        "Verify the work.",
+        snapshotPaths.explicit.before,
+        snapshotPaths.explicit.work,
+        snapshotPaths.explicit.after,
       ]);
       assert.strictEqual(
         yield* readOutput(harness.output),
@@ -196,9 +221,9 @@ describe("RalphRunner.runOnce", () => {
       const harness = yield* makeHarness(
         (request) => {
           const coordinate =
-            request.prompt === "Prepare the work."
+            request.instructionsPath === snapshotPaths.explicit.before
               ? Ref.set(sharedState, "prepared")
-              : request.prompt === "Do the work."
+              : request.instructionsPath === snapshotPaths.explicit.work
                 ? Ref.get(sharedState).pipe(
                     Effect.flatMap((value) =>
                       Ref.update(observedByWork, (observed) => [...observed, value]),
@@ -220,6 +245,7 @@ describe("RalphRunner.runOnce", () => {
     Effect.gen(function* () {
       const harness = yield* makeHarness(invocationComplete, {
         snapshot: {
+          snapshotDirectory: "/workspace/.ralph-snapshot-skipped",
           before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
           work: defaultSnapshot.work,
           after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
@@ -228,7 +254,7 @@ describe("RalphRunner.runOnce", () => {
 
       yield* harness.run(input());
 
-      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), ["Do one thing."]);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [snapshotPaths.defaultWork]);
       assert.strictEqual(
         yield* readOutput(harness.output),
         "--- Before work phase skipped (blank) ---\n" +
@@ -242,20 +268,24 @@ describe("RalphRunner.runOnce", () => {
   it.effect("stops successfully when any phase completes the workflow", () =>
     Effect.gen(function* () {
       const scenarios: ReadonlyArray<{
-        readonly completingPrompt: string;
-        readonly expectedPrompts: ReadonlyArray<string>;
+        readonly completingPath: string;
+        readonly expectedPaths: ReadonlyArray<string>;
       }> = [
         {
-          completingPrompt: "Prepare the work.",
-          expectedPrompts: ["Prepare the work."],
+          completingPath: snapshotPaths.explicit.before,
+          expectedPaths: [snapshotPaths.explicit.before],
         },
         {
-          completingPrompt: "Do the work.",
-          expectedPrompts: ["Prepare the work.", "Do the work."],
+          completingPath: snapshotPaths.explicit.work,
+          expectedPaths: [snapshotPaths.explicit.before, snapshotPaths.explicit.work],
         },
         {
-          completingPrompt: "Verify the work.",
-          expectedPrompts: ["Prepare the work.", "Do the work.", "Verify the work."],
+          completingPath: snapshotPaths.explicit.after,
+          expectedPaths: [
+            snapshotPaths.explicit.before,
+            snapshotPaths.explicit.work,
+            snapshotPaths.explicit.after,
+          ],
         },
       ];
 
@@ -267,17 +297,14 @@ describe("RalphRunner.runOnce", () => {
               (request) =>
                 Effect.succeed({
                   invocationComplete: true,
-                  workflowComplete: request.prompt === scenario.completingPrompt,
+                  workflowComplete: request.instructionsPath === scenario.completingPath,
                 }),
               { snapshot: explicitThreePhaseSnapshot },
             );
 
             yield* harness.run(input());
 
-            assert.deepStrictEqual(
-              yield* Ref.get(harness.invocationCalls),
-              scenario.expectedPrompts,
-            );
+            assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), scenario.expectedPaths);
             assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
               "Ralph once succeeded: workflow complete.",
             ]);
@@ -292,7 +319,9 @@ describe("RalphRunner.runOnce", () => {
       const failure = new CodexExitError({ exitCode: 17, message: "work failed" });
       const harness = yield* makeHarness(
         (request) =>
-          request.prompt === "Do the work." ? Effect.fail(failure) : invocationComplete(),
+          request.instructionsPath === snapshotPaths.explicit.work
+            ? Effect.fail(failure)
+            : invocationComplete(),
         { snapshot: explicitThreePhaseSnapshot },
       );
 
@@ -300,8 +329,8 @@ describe("RalphRunner.runOnce", () => {
 
       assert.isTrue(Result.isFailure(result));
       assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
-        "Prepare the work.",
-        "Do the work.",
+        snapshotPaths.explicit.before,
+        snapshotPaths.explicit.work,
       ]);
       assert.notInclude(yield* readOutput(harness.output), "After work");
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
@@ -316,7 +345,7 @@ describe("RalphRunner.runOnce", () => {
 
       yield* harness.run(input());
 
-      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), ["Do one thing."]);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [snapshotPaths.defaultWork]);
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph once succeeded: invocation complete.",
       ]);
@@ -405,23 +434,29 @@ describe("RalphRunner.runLoop", () => {
       Effect.gen(function* () {
         const sharedState = yield* Ref.make("initial");
         const observedByWork = yield* Ref.make<Array<string>>([]);
-        const snapshotForCall = (call: number): IterationSnapshot => ({
-          before: {
-            _tag: "Ready",
-            role: "BeforeWork",
-            prompt: `Prepare iteration ${call + 1}.`,
-          },
-          work: {
-            _tag: "Ready",
-            role: "Work",
-            prompt: `Work iteration ${call + 1}.`,
-          },
-          after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
-        });
+        const snapshotForCall = (call: number): IterationSnapshot => {
+          const iteration = call + 1;
+          const snapshotPath = snapshotPaths.iteration(iteration);
+
+          return {
+            snapshotDirectory: `/workspace/.ralph-snapshot-iteration-${iteration}`,
+            before: {
+              _tag: "Ready",
+              role: "BeforeWork",
+              snapshotPath: snapshotPath.before,
+            },
+            work: {
+              _tag: "Ready",
+              role: "Work",
+              snapshotPath: snapshotPath.work,
+            },
+            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+          };
+        };
         const harness = yield* makeHarness(
           (request) => {
-            const coordinate = request.prompt.startsWith("Prepare")
-              ? Ref.set(sharedState, request.prompt)
+            const coordinate = request.instructionsPath.includes("BEFORE_WORK.md")
+              ? Ref.set(sharedState, request.instructionsPath)
               : Ref.get(sharedState).pipe(
                   Effect.flatMap((value) =>
                     Ref.update(observedByWork, (observed) => [...observed, value]),
@@ -430,7 +465,7 @@ describe("RalphRunner.runLoop", () => {
             return coordinate.pipe(
               Effect.as({
                 invocationComplete: true,
-                workflowComplete: request.prompt === "Work iteration 3.",
+                workflowComplete: request.instructionsPath === snapshotPaths.iteration(3).work,
               }),
             );
           },
@@ -442,17 +477,17 @@ describe("RalphRunner.runLoop", () => {
         assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 3);
         assert.strictEqual(yield* Ref.get(harness.codexChecks), 1);
         assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
-          "Prepare iteration 1.",
-          "Work iteration 1.",
-          "Prepare iteration 2.",
-          "Work iteration 2.",
-          "Prepare iteration 3.",
-          "Work iteration 3.",
+          snapshotPaths.iteration(1).before,
+          snapshotPaths.iteration(1).work,
+          snapshotPaths.iteration(2).before,
+          snapshotPaths.iteration(2).work,
+          snapshotPaths.iteration(3).before,
+          snapshotPaths.iteration(3).work,
         ]);
         assert.deepStrictEqual(yield* Ref.get(observedByWork), [
-          "Prepare iteration 1.",
-          "Prepare iteration 2.",
-          "Prepare iteration 3.",
+          snapshotPaths.iteration(1).before,
+          snapshotPaths.iteration(2).before,
+          snapshotPaths.iteration(3).before,
         ]);
         assert.deepStrictEqual(
           (yield* readOutput(harness.output)).match(/=== Iteration \d+ ===/g),
@@ -467,20 +502,24 @@ describe("RalphRunner.runLoop", () => {
   it.effect("stops remaining phases and iterations when any phase completes the workflow", () =>
     Effect.gen(function* () {
       const scenarios: ReadonlyArray<{
-        readonly completingPrompt: string;
-        readonly expectedPrompts: ReadonlyArray<string>;
+        readonly completingPath: string;
+        readonly expectedPaths: ReadonlyArray<string>;
       }> = [
         {
-          completingPrompt: "Prepare the work.",
-          expectedPrompts: ["Prepare the work."],
+          completingPath: snapshotPaths.explicit.before,
+          expectedPaths: [snapshotPaths.explicit.before],
         },
         {
-          completingPrompt: "Do the work.",
-          expectedPrompts: ["Prepare the work.", "Do the work."],
+          completingPath: snapshotPaths.explicit.work,
+          expectedPaths: [snapshotPaths.explicit.before, snapshotPaths.explicit.work],
         },
         {
-          completingPrompt: "Verify the work.",
-          expectedPrompts: ["Prepare the work.", "Do the work.", "Verify the work."],
+          completingPath: snapshotPaths.explicit.after,
+          expectedPaths: [
+            snapshotPaths.explicit.before,
+            snapshotPaths.explicit.work,
+            snapshotPaths.explicit.after,
+          ],
         },
       ];
 
@@ -492,7 +531,7 @@ describe("RalphRunner.runLoop", () => {
               (request) =>
                 Effect.succeed({
                   invocationComplete: true,
-                  workflowComplete: request.prompt === scenario.completingPrompt,
+                  workflowComplete: request.instructionsPath === scenario.completingPath,
                 }),
               { snapshot: explicitThreePhaseSnapshot },
             );
@@ -500,10 +539,7 @@ describe("RalphRunner.runLoop", () => {
             yield* harness.runLoop(loopInput());
 
             assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 1);
-            assert.deepStrictEqual(
-              yield* Ref.get(harness.invocationCalls),
-              scenario.expectedPrompts,
-            );
+            assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), scenario.expectedPaths);
             assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
               "Ralph loop succeeded: workflow complete after 1 iteration.",
             ]);
@@ -518,7 +554,9 @@ describe("RalphRunner.runLoop", () => {
       const failure = new IdleInvocationTimeout({ message: "idle timeout" });
       const harness = yield* makeHarness(
         (request) =>
-          request.prompt === "Do the work." ? Effect.fail(failure) : invocationComplete(),
+          request.instructionsPath === snapshotPaths.explicit.work
+            ? Effect.fail(failure)
+            : invocationComplete(),
         { snapshot: explicitThreePhaseSnapshot },
       );
 
@@ -530,8 +568,8 @@ describe("RalphRunner.runLoop", () => {
       }
       assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 1);
       assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
-        "Prepare the work.",
-        "Do the work.",
+        snapshotPaths.explicit.before,
+        snapshotPaths.explicit.work,
       ]);
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph loop failed: idle timeout",

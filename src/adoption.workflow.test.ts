@@ -37,7 +37,15 @@ for argument do
   prompt="$argument"
 done
 
-case "$prompt" in
+instructions_path=$(printf '%s\\n' "$prompt" | sed -n 's/^@//p' | tail -n 1)
+if [ -z "$instructions_path" ]; then
+  printf '%s\\n' 'Missing fake Codex instructions path.' >&2
+  exit 64
+fi
+
+instructions=$(cat "$instructions_path")
+
+case "$instructions" in
   *"Complete exactly one checklist item"*)
     awk 'BEGIN { completed = 0 } !completed && /^- \\[ \\]/ { sub(/\\[ \\]/, "[x]"); completed = 1 } { print }' CHECKLIST.md > CHECKLIST.md.next
     mv CHECKLIST.md.next CHECKLIST.md
@@ -143,6 +151,12 @@ describe("breaking-release adoption", () => {
         yield* fileSystem.readFileString(path.join(workspace, "CHECKLIST.md")),
         "- [x] Add validation for the primary user input",
       );
+      assert.deepStrictEqual(
+        (yield* fileSystem.readDirectory(workspace)).filter((name) =>
+          name.startsWith(".ralph-snapshot-"),
+        ),
+        [],
+      );
 
       const loop = yield* runCli(["loop", "-C", workspace, "--ralph-dir", "."]);
       assert.strictEqual(loop.exitCode, 0);
@@ -156,6 +170,12 @@ describe("breaking-release adoption", () => {
           /Completed one checklist item\./g,
         )?.length,
         3,
+      );
+      assert.deepStrictEqual(
+        (yield* fileSystem.readDirectory(workspace)).filter((name) =>
+          name.startsWith(".ralph-snapshot-"),
+        ),
+        [],
       );
 
       const notifications = yield* fileSystem.readFileString(notificationLog);

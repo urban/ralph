@@ -29,14 +29,22 @@ const invocationOutcome = (workflowComplete: boolean): InvocationOutcome => ({
 const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
   invoke: (request: InvocationRequest) => Effect.Effect<InvocationOutcome, E>,
 ) {
+  const fileSystem = yield* FileSystem.FileSystem;
   const invocations = yield* Ref.make<Array<string>>([]);
   const notifications = yield* Ref.make<Array<string>>([]);
   const output = yield* Ref.make<Array<Uint8Array>>([]);
   const toBytes = (chunk: string | Uint8Array) =>
     typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+  const readInstructions = (request: InvocationRequest) =>
+    fileSystem
+      .readFileString(request.instructionsPath)
+      .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
   const codexRunner = CodexRunner.of({
     runInvocation: (request) =>
-      Ref.update(invocations, (prompts) => [...prompts, request.prompt]).pipe(
+      readInstructions(request).pipe(
+        Effect.flatMap((instructions) =>
+          Ref.update(invocations, (prompts) => [...prompts, instructions]),
+        ),
         Effect.andThen(invoke(request)),
       ),
   });
@@ -112,10 +120,16 @@ describe("loop phase workflow", () => {
       });
       yield* fileSystem.writeFileString(checklistPath, "- [ ] alpha\n- [ ] beta\n");
       yield* fileSystem.writeFileString(progressPath, "");
+      const readInstructions = (request: InvocationRequest) =>
+        fileSystem
+          .readFileString(request.instructionsPath)
+          .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
 
       const invoke = Effect.fnUntraced(
         function* (request: InvocationRequest) {
-          switch (request.prompt) {
+          const instructions = yield* readInstructions(request);
+
+          switch (instructions) {
             case "Before v1.\n":
               yield* fileSystem.writeFileString(
                 join(phaseDirectory, "BEFORE_WORK.md"),
@@ -156,7 +170,7 @@ describe("loop phase workflow", () => {
               return invocationOutcome(true);
             }
             default:
-              return yield* Effect.die(`Unexpected prompt: ${request.prompt}`);
+              return yield* Effect.die(`Unexpected prompt: ${instructions}`);
           }
         },
         Effect.catch(() => Effect.die("Could not advance loop workflow fixtures")),
@@ -184,6 +198,12 @@ describe("loop phase workflow", () => {
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph loop succeeded: workflow complete after 2 iterations.",
       ]);
+      assert.deepStrictEqual(
+        (yield* fileSystem.readDirectory(workspace)).filter((name) =>
+          name.startsWith(".ralph-snapshot-"),
+        ),
+        [],
+      );
       assert.deepStrictEqual((yield* readOutput(harness.output)).match(/=== Iteration \d+ ===/g), [
         "=== Iteration 1 ===",
         "=== Iteration 2 ===",
@@ -203,6 +223,10 @@ describe("loop phase workflow", () => {
         work: "Work.\n",
         after: "Verify.\n",
       });
+      const readInstructions = (request: InvocationRequest) =>
+        fileSystem
+          .readFileString(request.instructionsPath)
+          .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
       const scenarios: ReadonlyArray<{
         readonly completingPrompt: string;
         readonly expectedPrompts: ReadonlyArray<string>;
@@ -220,7 +244,11 @@ describe("loop phase workflow", () => {
         (scenario) =>
           Effect.gen(function* () {
             const harness = yield* makeHarness((request) =>
-              Effect.succeed(invocationOutcome(request.prompt === scenario.completingPrompt)),
+              readInstructions(request).pipe(
+                Effect.map((instructions) =>
+                  invocationOutcome(instructions === scenario.completingPrompt),
+                ),
+              ),
             );
 
             yield* harness.run([
@@ -294,10 +322,18 @@ describe("loop phase workflow", () => {
         work: "Work.\n",
         after: "Verify.\n",
       });
+      const readInstructions = (request: InvocationRequest) =>
+        fileSystem
+          .readFileString(request.instructionsPath)
+          .pipe(Effect.catch(() => Effect.die("Could not read fake Codex instructions")));
       const harness = yield* makeHarness((request) =>
-        request.prompt === "Work.\n"
-          ? Effect.fail(new CodexExitError({ exitCode: 17, message: "work failed" }))
-          : Effect.succeed(invocationOutcome(false)),
+        readInstructions(request).pipe(
+          Effect.flatMap((instructions) =>
+            instructions === "Work.\n"
+              ? Effect.fail(new CodexExitError({ exitCode: 17, message: "work failed" }))
+              : Effect.succeed(invocationOutcome(false)),
+          ),
+        ),
       );
 
       const result = yield* harness
