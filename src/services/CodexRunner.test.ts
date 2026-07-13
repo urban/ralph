@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Duration, Effect, Option, Ref, Sink, Stdio, Stream } from "effect";
+import { Duration, Effect, Fiber, Option, Ref, Schedule, Sink, Stdio, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -20,16 +21,17 @@ const request = (yolo = false): PreparedWorkInvocation => ({
   yolo,
 });
 
-const makeHarness = Effect.fnUntraced(function* (
-  stdoutChunks: ReadonlyArray<string>,
-  stderrChunks: ReadonlyArray<string>,
-  exitCode: number,
+const makeCustomHarness = Effect.fnUntraced(function* (
+  stdout: Stream.Stream<Uint8Array>,
+  stderr: Stream.Stream<Uint8Array>,
+  exitCode: Effect.Effect<ChildProcessSpawner.ExitCode>,
 ) {
   const stdoutOutput = yield* Ref.make<Array<Uint8Array>>([]);
   const stderrOutput = yield* Ref.make<Array<Uint8Array>>([]);
   const capturedCommand = yield* Ref.make(Option.none<ChildProcess.Command>());
-  const streamsDrained = yield* Ref.make(false);
   const scopeClosed = yield* Ref.make(false);
+  const streamConsumersClosed = yield* Ref.make(0);
+  const killRequests = yield* Ref.make<Array<ChildProcess.KillOptions | undefined>>([]);
   const toBytes = (chunk: string | Uint8Array) =>
     typeof chunk === "string" ? encoder.encode(chunk) : chunk;
   const stdio = Stdio.make({
@@ -44,21 +46,16 @@ const makeHarness = Effect.fnUntraced(function* (
         Ref.update(stderrOutput, (chunks) => [...chunks, toBytes(chunk)]),
       ),
   });
-  const stdout = Stream.fromIterable(stdoutChunks.map((chunk) => encoder.encode(chunk))).pipe(
-    Stream.concat(
-      Stream.fromEffect(Ref.set(streamsDrained, true).pipe(Effect.as(encoder.encode("")))),
-    ),
-  );
-  const stderr = Stream.fromIterable(stderrChunks.map((chunk) => encoder.encode(chunk)));
+  const closeConsumer = Ref.update(streamConsumersClosed, (count) => count + 1);
   const handle = ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
     stdin: Sink.drain,
-    stdout,
-    stderr,
+    stdout: stdout.pipe(Stream.ensuring(closeConsumer)),
+    stderr: stderr.pipe(Stream.ensuring(closeConsumer)),
     all: Stream.empty,
-    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+    exitCode,
     isRunning: Effect.succeed(false),
-    kill: () => Effect.void,
+    kill: (options) => Ref.update(killRequests, (requests) => [...requests, options]),
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
     unref: Effect.succeed(Effect.void),
@@ -72,13 +69,34 @@ const makeHarness = Effect.fnUntraced(function* (
 
   return {
     capturedCommand,
+    killRequests,
     scopeClosed,
     spawner,
     stderrOutput,
     stdio,
     stdoutOutput,
-    streamsDrained,
+    streamConsumersClosed,
   };
+});
+
+const makeHarness = Effect.fnUntraced(function* (
+  stdoutChunks: ReadonlyArray<string>,
+  stderrChunks: ReadonlyArray<string>,
+  exitCode: number,
+) {
+  const streamsDrained = yield* Ref.make(false);
+  const stdout = Stream.fromIterable(stdoutChunks.map((chunk) => encoder.encode(chunk))).pipe(
+    Stream.concat(
+      Stream.fromEffect(Ref.set(streamsDrained, true).pipe(Effect.as(encoder.encode("")))),
+    ),
+  );
+  const harness = yield* makeCustomHarness(
+    stdout,
+    Stream.fromIterable(stderrChunks.map((chunk) => encoder.encode(chunk))),
+    Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+  );
+
+  return { ...harness, streamsDrained };
 });
 
 const provideHarness = <A, E>(
@@ -143,6 +161,7 @@ describe("CodexRunner.runInvocation", () => {
         stdin: "inherit",
         stdout: "pipe",
         stderr: "pipe",
+        detached: true,
       });
       assert.deepStrictEqual(command.value.args.slice(0, 4), [
         "exec",
@@ -195,6 +214,99 @@ describe("CodexRunner.runInvocation", () => {
       if (error._tag === "CodexExitError") {
         assert.strictEqual(error.exitCode, 17);
       }
+    }),
+  );
+
+  it.effect("resets idle time from either output stream then terminates after inactivity", () =>
+    Effect.gen(function* () {
+      const stdout = Stream.fromEffect(
+        Effect.sleep(Duration.seconds(4)).pipe(Effect.as(encoder.encode("stdout activity"))),
+      ).pipe(Stream.concat(Stream.never));
+      const stderr = Stream.fromEffect(
+        Effect.sleep(Duration.seconds(8)).pipe(Effect.as(encoder.encode("stderr activity"))),
+      ).pipe(Stream.concat(Stream.never));
+      const harness = yield* makeCustomHarness(stdout, stderr, Effect.never);
+      const invocation = provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* runner.runInvocation({
+            ...request(),
+            timeouts: { idle: Duration.seconds(5), invocation: Duration.seconds(30) },
+          });
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+      const fiber = yield* invocation.pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust(Duration.seconds(12));
+      assert.isUndefined(fiber.pollUnsafe());
+      yield* TestClock.adjust(Duration.seconds(1));
+      const error = yield* Effect.flip(Fiber.join(fiber));
+
+      assert.strictEqual(error._tag, "IdleInvocationTimeout");
+      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [
+        { killSignal: "SIGTERM", forceKillAfter: "5 seconds" },
+      ]);
+      assert.strictEqual(yield* Ref.get(harness.streamConsumersClosed), 2);
+      assert.isTrue(yield* Ref.get(harness.scopeClosed));
+    }),
+  );
+
+  it.effect("enforces the absolute deadline despite continuing output", () =>
+    Effect.gen(function* () {
+      const noisyStdout = Stream.fromEffect(
+        Effect.sleep(Duration.seconds(2)).pipe(Effect.as(encoder.encode("activity"))),
+      ).pipe(Stream.repeat(Schedule.forever));
+      const harness = yield* makeCustomHarness(noisyStdout, Stream.never, Effect.never);
+      const invocation = provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* runner.runInvocation({
+            ...request(),
+            timeouts: { idle: Duration.seconds(5), invocation: Duration.seconds(10) },
+          });
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+      const fiber = yield* invocation.pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      const error = yield* Effect.flip(Fiber.join(fiber));
+
+      assert.strictEqual(error._tag, "AbsoluteInvocationTimeout");
+      assert.deepStrictEqual(yield* Ref.get(harness.killRequests), [
+        { killSignal: "SIGTERM", forceKillAfter: "5 seconds" },
+      ]);
+      assert.strictEqual(yield* Ref.get(harness.streamConsumersClosed), 2);
+      assert.isTrue(yield* Ref.get(harness.scopeClosed));
+    }),
+  );
+
+  it.effect("chooses the absolute timeout deterministically when both deadlines coincide", () =>
+    Effect.gen(function* () {
+      const stdout = Stream.fromEffect(
+        Effect.sleep(Duration.seconds(4)).pipe(Effect.as(encoder.encode("activity"))),
+      ).pipe(Stream.concat(Stream.never));
+      const harness = yield* makeCustomHarness(stdout, Stream.never, Effect.never);
+      const invocation = provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* runner.runInvocation({
+            ...request(),
+            timeouts: { idle: Duration.seconds(6), invocation: Duration.seconds(10) },
+          });
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+      const fiber = yield* invocation.pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* TestClock.adjust(Duration.seconds(10));
+      const error = yield* Effect.flip(Fiber.join(fiber));
+
+      assert.strictEqual(error._tag, "AbsoluteInvocationTimeout");
     }),
   );
 });

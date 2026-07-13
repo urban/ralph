@@ -97,12 +97,30 @@ export class MissingInvocationMarker extends Schema.TaggedErrorClass<MissingInvo
   { message: Schema.String },
 ) {}
 
+export class IdleInvocationTimeout extends Schema.TaggedErrorClass<IdleInvocationTimeout>()(
+  "IdleInvocationTimeout",
+  { message: Schema.String },
+) {}
+
+export class AbsoluteInvocationTimeout extends Schema.TaggedErrorClass<AbsoluteInvocationTimeout>()(
+  "AbsoluteInvocationTimeout",
+  { message: Schema.String },
+) {}
+
+export class CodexTerminationError extends Schema.TaggedErrorClass<CodexTerminationError>()(
+  "CodexTerminationError",
+  { message: Schema.String },
+) {}
+
 export type CodexInvocationError =
   | CodexSpawnError
   | CodexStreamError
   | CodexExitStatusError
   | CodexExitError
-  | MissingInvocationMarker;
+  | MissingInvocationMarker
+  | IdleInvocationTimeout
+  | AbsoluteInvocationTimeout
+  | CodexTerminationError;
 
 const CompactDuration = Schema.TemplateLiteralParser([
   Schema.Int,
