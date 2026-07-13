@@ -1,6 +1,14 @@
 import { Clock, Context, Duration, Effect, Layer, Result, Stdio, Stream } from "effect";
 
-import type { OnceFlagsInput, TimeoutInputError } from "../domain/WorkInvocation";
+import type {
+  InvocationOutcome,
+  InvocationRequest,
+  OnceFlagsInput,
+  PhaseRole,
+  PhaseSnapshot,
+  PreparedOnceSequence,
+  TimeoutInputError,
+} from "../domain/WorkInvocation";
 import { type CodexInvocationError, OperatorOutputError } from "../domain/WorkInvocation";
 import type { WorkInputError } from "../domain/WorkInputError";
 import type { RalphExit } from "../errors/RalphExit";
@@ -45,10 +53,64 @@ export class RalphRunner extends Context.Service<
       const notifyBestEffort = (message: string) =>
         hostTools.notifyIfAvailable(message).pipe(Effect.catchDefect(() => Effect.void));
 
+      const phaseLabel = (role: PhaseRole): string => {
+        switch (role) {
+          case "BeforeWork":
+            return "Before work";
+          case "Work":
+            return "Work";
+          case "AfterWork":
+            return "After work";
+        }
+      };
+
+      const invocationRequest = (
+        prepared: PreparedOnceSequence,
+        phase: Extract<PhaseSnapshot, { readonly _tag: "Ready" }>,
+      ): InvocationRequest => ({
+        workingDirectory: prepared.workingDirectory,
+        prompt: phase.prompt,
+        timeouts: prepared.timeouts,
+        yolo: prepared.yolo,
+      });
+
+      const runPhase = Effect.fnUntraced(function* (
+        prepared: PreparedOnceSequence,
+        phase: PhaseSnapshot,
+      ) {
+        if (phase._tag === "Skipped") {
+          return false;
+        }
+
+        const label = phaseLabel(phase.role);
+        yield* writeOperatorOutput(`=== ${label} ===\n`);
+
+        const startedAt = yield* Clock.currentTimeNanos;
+        const invocation = yield* codexRunner
+          .runInvocation(invocationRequest(prepared, phase))
+          .pipe(Effect.result);
+        const endedAt = yield* Clock.currentTimeNanos;
+        const elapsed = Duration.format(Duration.nanos(endedAt - startedAt));
+
+        if (Result.isSuccess(invocation)) {
+          const outcome = invocation.success;
+          const outcomeLabel = outcome.workflowComplete
+            ? "workflow complete"
+            : "invocation complete";
+          yield* writeOperatorOutput(`--- ${label} ${outcomeLabel} in ${elapsed} ---\n`);
+          return outcome.workflowComplete;
+        }
+
+        yield* writeOperatorOutput(
+          `--- ${label} failed in ${elapsed}: ${invocation.failure.message} ---\n`,
+        );
+        return yield* invocation.failure;
+      });
+
       const runOnce = Effect.fn("RalphRunner.runOnce")(function* (input: OnceFlagsInput) {
         const execution = Effect.gen(function* () {
           const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
-          const prepared = yield* workspace.prepareWorkInvocation({
+          const prepared = yield* workspace.prepareOnceSequence({
             work: input.work,
             ralphDir: input.ralphDir,
             cwd: input.cwd,
@@ -57,24 +119,15 @@ export class RalphRunner extends Context.Service<
           });
 
           yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
-          yield* writeOperatorOutput("=== Work ===\n");
-
-          const startedAt = yield* Clock.currentTimeNanos;
-          const invocation = yield* codexRunner.runInvocation(prepared).pipe(Effect.result);
-          const endedAt = yield* Clock.currentTimeNanos;
-          const elapsed = Duration.format(Duration.nanos(endedAt - startedAt));
-
-          if (Result.isSuccess(invocation)) {
-            const outcome = invocation.success;
-            const label = outcome.workflowComplete ? "workflow complete" : "invocation complete";
-            yield* writeOperatorOutput(`--- Work ${label} in ${elapsed} ---\n`);
-            return outcome;
-          }
-
-          yield* writeOperatorOutput(
-            `--- Work failed in ${elapsed}: ${invocation.failure.message} ---\n`,
+          const workflowCompletions = yield* Effect.forEach(
+            [prepared.phases.before, prepared.phases.work, prepared.phases.after],
+            (phase) => runPhase(prepared, phase),
           );
-          return yield* invocation.failure;
+
+          return {
+            invocationComplete: true,
+            workflowComplete: workflowCompletions.some((completed) => completed),
+          } satisfies InvocationOutcome;
         });
         const result = yield* execution.pipe(Effect.result);
 

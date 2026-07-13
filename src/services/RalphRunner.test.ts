@@ -6,9 +6,11 @@ import {
   CodexExitError,
   type CodexInvocationError,
   IdleInvocationTimeout,
+  type InvocationOutcome,
+  type InvocationRequest,
   MissingInvocationMarker,
   type OnceFlagsInput,
-  type PreparedWorkInvocation,
+  type PreparedOnceSequence,
 } from "../domain/WorkInvocation";
 import { CodexRunner } from "./CodexRunner";
 import { HostTools } from "./HostTools";
@@ -28,24 +30,39 @@ const input = (overrides: Partial<OnceFlagsInput> = {}): OnceFlagsInput => ({
   ...overrides,
 });
 
-const prepared: PreparedWorkInvocation = {
+const prepared: PreparedOnceSequence = {
   workingDirectory: "/workspace",
-  work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+  phases: {
+    before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+    work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+    after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+  },
   timeouts: { idle: Duration.minutes(5), invocation: Duration.minutes(30) },
   yolo: false,
 };
 
+const explicitThreePhaseSequence: PreparedOnceSequence = {
+  ...prepared,
+  phases: {
+    before: { _tag: "Ready", role: "BeforeWork", prompt: "Prepare the work." },
+    work: { _tag: "Ready", role: "Work", prompt: "Do the work." },
+    after: { _tag: "Ready", role: "AfterWork", prompt: "Verify the work." },
+  },
+};
+
 const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>(
-  invocation: Effect.Effect<
-    { readonly invocationComplete: true; readonly workflowComplete: boolean },
-    E
-  >,
-  notificationDefects = false,
+  invocation: (
+    request: InvocationRequest,
+  ) => Effect.Effect<{ readonly invocationComplete: true; readonly workflowComplete: boolean }, E>,
+  options: {
+    readonly notificationDefects?: boolean;
+    readonly preparedSequence?: PreparedOnceSequence;
+  } = {},
 ) {
   const output = yield* Ref.make<Array<Uint8Array>>([]);
   const notifications = yield* Ref.make<Array<string>>([]);
   const workspaceCalls = yield* Ref.make(0);
-  const invocationCalls = yield* Ref.make(0);
+  const invocationCalls = yield* Ref.make<Array<string>>([]);
   const codexChecks = yield* Ref.make(0);
   const toBytes = (chunk: string | Uint8Array) =>
     typeof chunk === "string" ? encoder.encode(chunk) : chunk;
@@ -59,8 +76,10 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
     stderr: () => Sink.drain,
   });
   const codexRunner = CodexRunner.of({
-    runInvocation: () =>
-      Ref.update(invocationCalls, (count) => count + 1).pipe(Effect.andThen(invocation)),
+    runInvocation: (request) =>
+      Ref.update(invocationCalls, (prompts) => [...prompts, request.prompt]).pipe(
+        Effect.andThen(invocation(request)),
+      ),
     run: () => Effect.die("legacy run is not part of once"),
     runCapture: () => Effect.die("legacy capture is not part of once"),
     isChecklistComplete: () => false,
@@ -68,15 +87,21 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   const workspace = RalphWorkspace.of({
     init: () => Effect.die("init is not part of once"),
     prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
-    prepareWorkInvocation: () =>
-      Ref.update(workspaceCalls, (count) => count + 1).pipe(Effect.as(prepared)),
+    prepareOnceSequence: () =>
+      Ref.update(workspaceCalls, (count) => count + 1).pipe(
+        Effect.as(options.preparedSequence ?? prepared),
+      ),
   });
   const hostTools = HostTools.of({
     commandExists: () => Effect.succeed(true),
     ensureCommandAvailable: () => Ref.update(codexChecks, (count) => count + 1),
     notifyIfAvailable: (message) =>
       Ref.update(notifications, (messages) => [...messages, message]).pipe(
-        Effect.andThen(notificationDefects ? Effect.die("notification unavailable") : Effect.void),
+        Effect.andThen(
+          options.notificationDefects === true
+            ? Effect.die("notification unavailable")
+            : Effect.void,
+        ),
       ),
   });
   const run = (onceInput: OnceFlagsInput) =>
@@ -98,24 +123,95 @@ const readOutput = Effect.fnUntraced(function* (output: Ref.Ref<Array<Uint8Array
   return (yield* Ref.get(output)).map((chunk) => decoder.decode(chunk)).join("");
 });
 
+const invocationComplete = (): Effect.Effect<InvocationOutcome> =>
+  Effect.succeed({ invocationComplete: true, workflowComplete: false });
+
 describe("RalphRunner.runOnce", () => {
-  it.effect("succeeds on invocation completion without overall completion", () =>
+  it.effect("runs every ready phase in before, work, after order", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness(
-        Effect.succeed({ invocationComplete: true, workflowComplete: false }),
-      );
+      const harness = yield* makeHarness(invocationComplete, {
+        preparedSequence: explicitThreePhaseSequence,
+      });
 
       yield* harness.run(input());
 
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
+        "Prepare the work.",
+        "Do the work.",
+        "Verify the work.",
+      ]);
       assert.strictEqual(
         yield* readOutput(harness.output),
-        "=== Work ===\n--- Work invocation complete in 0 ---\n",
+        "=== Before work ===\n" +
+          "--- Before work invocation complete in 0 ---\n" +
+          "=== Work ===\n" +
+          "--- Work invocation complete in 0 ---\n" +
+          "=== After work ===\n" +
+          "--- After work invocation complete in 0 ---\n",
       );
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph once succeeded: invocation complete.",
       ]);
       assert.strictEqual(yield* Ref.get(harness.codexChecks), 1);
-      assert.strictEqual(yield* Ref.get(harness.invocationCalls), 1);
+    }),
+  );
+
+  it.effect("does not invoke skipped optional phases", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(invocationComplete, {
+        preparedSequence: {
+          ...prepared,
+          phases: {
+            before: { _tag: "Skipped", role: "BeforeWork", reason: "Blank" },
+            work: prepared.phases.work,
+            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+          },
+        },
+      });
+
+      yield* harness.run(input());
+
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), ["Do one thing."]);
+      assert.strictEqual(
+        yield* readOutput(harness.output),
+        "=== Work ===\n--- Work invocation complete in 0 ---\n",
+      );
+    }),
+  );
+
+  it.effect("prevents later phases after a phase failure", () =>
+    Effect.gen(function* () {
+      const failure = new CodexExitError({ exitCode: 17, message: "work failed" });
+      const harness = yield* makeHarness(
+        (request) =>
+          request.prompt === "Do the work." ? Effect.fail(failure) : invocationComplete(),
+        { preparedSequence: explicitThreePhaseSequence },
+      );
+
+      const result = yield* harness.run(input()).pipe(Effect.result);
+
+      assert.isTrue(Result.isFailure(result));
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
+        "Prepare the work.",
+        "Do the work.",
+      ]);
+      assert.notInclude(yield* readOutput(harness.output), "After work");
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph once failed: work failed",
+      ]);
+    }),
+  );
+
+  it.effect("succeeds on invocation completion without overall completion", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(invocationComplete);
+
+      yield* harness.run(input());
+
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), ["Do one thing."]);
+      assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
+        "Ralph once succeeded: invocation complete.",
+      ]);
     }),
   );
 
@@ -132,7 +228,7 @@ describe("RalphRunner.runOnce", () => {
         failures,
         (failure) =>
           Effect.gen(function* () {
-            const harness = yield* makeHarness(Effect.fail(failure));
+            const harness = yield* makeHarness(() => Effect.fail(failure));
             const result = yield* harness.run(input()).pipe(Effect.result);
 
             assert.isTrue(Result.isFailure(result));
@@ -155,12 +251,13 @@ describe("RalphRunner.runOnce", () => {
 
   it.effect("preserves success and failure when notification defects", () =>
     Effect.gen(function* () {
-      const successHarness = yield* makeHarness(
-        Effect.succeed({ invocationComplete: true, workflowComplete: false }),
-        true,
-      );
+      const successHarness = yield* makeHarness(invocationComplete, {
+        notificationDefects: true,
+      });
       const failure = new MissingInvocationMarker({ message: "missing marker" });
-      const failureHarness = yield* makeHarness(Effect.fail(failure), true);
+      const failureHarness = yield* makeHarness(() => Effect.fail(failure), {
+        notificationDefects: true,
+      });
 
       const success = yield* successHarness.run(input()).pipe(Effect.result);
       const failed = yield* failureHarness.run(input()).pipe(Effect.result);
@@ -177,9 +274,7 @@ describe("RalphRunner.runOnce", () => {
 
   it.effect("rejects invalid timeouts before workspace and process work and still notifies", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness(
-        Effect.succeed({ invocationComplete: true, workflowComplete: false }),
-      );
+      const harness = yield* makeHarness(invocationComplete);
       const result = yield* harness
         .run(input({ idleTimeout: "30m", invocationTimeout: "5m" }))
         .pipe(Effect.result);
@@ -189,7 +284,7 @@ describe("RalphRunner.runOnce", () => {
         assert.strictEqual(result.failure._tag, "InvalidTimeoutOrder");
       }
       assert.strictEqual(yield* Ref.get(harness.workspaceCalls), 0);
-      assert.strictEqual(yield* Ref.get(harness.invocationCalls), 0);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), []);
       assert.strictEqual((yield* Ref.get(harness.notifications)).length, 1);
     }),
   );

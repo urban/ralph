@@ -4,7 +4,7 @@ import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option } from "effect
 import { join } from "node:path";
 
 import type { SharedFlagsInput } from "../domain/Ralph";
-import type { WorkInvocationInput } from "../domain/WorkInvocation";
+import type { OnceSequenceInput } from "../domain/WorkInvocation";
 import { RalphWorkspace } from "./RalphWorkspace";
 
 const workspaceLayer = RalphWorkspace.layer.pipe(Layer.provideMerge(BunServices.layer));
@@ -38,7 +38,7 @@ const makeSharedFlags = (overrides: Partial<SharedFlagsInput> = {}): SharedFlags
   ...overrides,
 });
 
-const makeWorkInput = (overrides: Partial<WorkInvocationInput> = {}): WorkInvocationInput => ({
+const makeOnceSequenceInput = (overrides: Partial<OnceSequenceInput> = {}): OnceSequenceInput => ({
   work: Option.none(),
   ralphDir: Option.none(),
   cwd: Option.none(),
@@ -220,8 +220,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
-        workspace.prepareWorkInvocation(
-          makeWorkInput({
+        workspace.prepareOnceSequence(
+          makeOnceSequenceInput({
             cwd: Option.some("./project"),
             work: Option.some("./WORK.md"),
             yolo: true,
@@ -231,10 +231,14 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       yield* fileSystem.writeFileString(workPath, "Changed after preparation.\n");
 
       expect(prepared.workingDirectory).toBe(yield* fileSystem.realPath(projectDirectory));
-      expect(prepared.work).toEqual({
-        _tag: "Ready",
-        role: "Work",
-        prompt: "Do the approved work.\n",
+      expect(prepared.phases).toEqual({
+        before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+        work: {
+          _tag: "Ready",
+          role: "Work",
+          prompt: "Do the approved work.\n",
+        },
+        after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
       });
       expect(prepared.yolo).toBe(true);
     }),
@@ -252,10 +256,10 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
-        workspace.prepareWorkInvocation(makeWorkInput({ ralphDir: Option.some("./.ralph") })),
+        workspace.prepareOnceSequence(makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
       );
 
-      expect(prepared.work.prompt).toBe("Run from directory.\n");
+      expect(prepared.phases.work.prompt).toBe("Run from directory.\n");
     }),
   );
 
@@ -265,13 +269,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const tempDirectory = yield* makeTempDirectory();
       const missing = yield* withWorkingDirectory(
         tempDirectory,
-        Effect.flip(workspace.prepareWorkInvocation(makeWorkInput())),
+        Effect.flip(workspace.prepareOnceSequence(makeOnceSequenceInput())),
       );
       const invalidDirectory = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(
-            makeWorkInput({ ralphDir: Option.some("./missing-ralph") }),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ ralphDir: Option.some("./missing-ralph") }),
           ),
         ),
       );
@@ -288,8 +292,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(
-            makeWorkInput({ cwd: Option.some("./missing"), work: Option.some("WORK.md") }),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ cwd: Option.some("./missing"), work: Option.some("WORK.md") }),
           ),
         ),
       );
@@ -310,13 +314,17 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const missing = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./missing.md") })),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ work: Option.some("./missing.md") }),
+          ),
         ),
       );
       const nonFile = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./work-directory") })),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ work: Option.some("./work-directory") }),
+          ),
         ),
       );
 
@@ -337,13 +345,15 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const unreadable = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./invalid.md") })),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({ work: Option.some("./invalid.md") }),
+          ),
         ),
       );
       const blank = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(makeWorkInput({ work: Option.some("./blank.md") })),
+          workspace.prepareOnceSequence(makeOnceSequenceInput({ work: Option.some("./blank.md") })),
         ),
       );
 
@@ -368,8 +378,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const outside = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(
-            makeWorkInput({
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("../outside.md"),
             }),
@@ -379,8 +389,8 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const sibling = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(
-            makeWorkInput({
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
               cwd: Option.some("./project"),
               work: Option.some("../project-sibling/WORK.md"),
             }),
@@ -408,8 +418,11 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
-          workspace.prepareWorkInvocation(
-            makeWorkInput({ cwd: Option.some("./project"), work: Option.some("./WORK.md") }),
+          workspace.prepareOnceSequence(
+            makeOnceSequenceInput({
+              cwd: Option.some("./project"),
+              work: Option.some("./WORK.md"),
+            }),
           ),
         ),
       );

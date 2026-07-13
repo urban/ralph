@@ -5,15 +5,15 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import { invocationCompletionMarker, workflowCompletionMarker } from "../domain/CompletionMarkers";
-import type { PreparedWorkInvocation } from "../domain/WorkInvocation";
+import type { InvocationRequest } from "../domain/WorkInvocation";
 import { CodexRunner, genericCompletionProtocol } from "./CodexRunner";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const request = (yolo = false): PreparedWorkInvocation => ({
+const request = (yolo = false): InvocationRequest => ({
   workingDirectory: "/workspace",
-  work: { _tag: "Ready", role: "Work", prompt: "Do one thing." },
+  prompt: "Do one thing.",
   timeouts: {
     idle: Duration.minutes(5),
     invocation: Duration.minutes(30),

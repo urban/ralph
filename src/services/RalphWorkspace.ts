@@ -7,7 +7,7 @@ import {
   type RalphFilePaths,
   type SharedFlagsInput,
 } from "../domain/Ralph";
-import type { PreparedWorkInvocation, WorkInvocationInput } from "../domain/WorkInvocation";
+import type { OnceSequenceInput, PreparedOnceSequence } from "../domain/WorkInvocation";
 import {
   BlankWork,
   InvalidRalphDirectory,
@@ -43,9 +43,9 @@ export class RalphWorkspace extends Context.Service<
   {
     init(targetDirectory: Option.Option<string>): Effect.Effect<void, RalphExit>;
     prepareRunContext(input: SharedFlagsInput): Effect.Effect<PreparedRunContext, RalphExit>;
-    prepareWorkInvocation(
-      input: WorkInvocationInput,
-    ): Effect.Effect<PreparedWorkInvocation, WorkInputError>;
+    prepareOnceSequence(
+      input: OnceSequenceInput,
+    ): Effect.Effect<PreparedOnceSequence, WorkInputError>;
   }
 >()("ralph-effect/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
@@ -370,7 +370,7 @@ export class RalphWorkspace extends Context.Service<
       });
 
       const resolveWorkPath = Effect.fnUntraced(function* (
-        input: WorkInvocationInput,
+        input: OnceSequenceInput,
         workingDirectory: string,
       ) {
         if (Option.isSome(input.work)) {
@@ -416,7 +416,7 @@ export class RalphWorkspace extends Context.Service<
         });
       });
 
-      const prepareWorkInvocation = Effect.fnUntraced(function* (input: WorkInvocationInput) {
+      const prepareOnceSequence = Effect.fnUntraced(function* (input: OnceSequenceInput) {
         const workingDirectory = yield* canonicalWorkingDirectory(input.cwd);
         const requestedWorkPath = yield* resolveWorkPath(input, workingDirectory);
         const info = yield* fileSystem.stat(requestedWorkPath).pipe(
@@ -479,16 +479,20 @@ export class RalphWorkspace extends Context.Service<
 
         return {
           workingDirectory,
-          work: { _tag: "Ready", role: "Work", prompt },
+          phases: {
+            before: { _tag: "Skipped", role: "BeforeWork", reason: "Missing" },
+            work: { _tag: "Ready", role: "Work", prompt },
+            after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+          },
           timeouts: input.timeouts,
           yolo: input.yolo,
-        } satisfies PreparedWorkInvocation;
+        } satisfies PreparedOnceSequence;
       });
 
       return RalphWorkspace.of({
         init,
         prepareRunContext,
-        prepareWorkInvocation,
+        prepareOnceSequence,
       });
     }),
   );

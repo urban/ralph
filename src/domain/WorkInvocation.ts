@@ -44,7 +44,7 @@ export interface OnceFlagsInput {
   readonly yolo: boolean;
 }
 
-export interface WorkInvocationInput {
+export interface OnceSequenceInput {
   readonly work: Option.Option<string>;
   readonly ralphDir: Option.Option<string>;
   readonly cwd: Option.Option<string>;
@@ -52,15 +52,47 @@ export interface WorkInvocationInput {
   readonly timeouts: TimeoutPolicy;
 }
 
-export interface WorkSnapshot {
+export type PhaseRole = "BeforeWork" | "Work" | "AfterWork";
+export type OptionalPhaseRole = Exclude<PhaseRole, "Work">;
+
+export type PhaseSource<Role extends PhaseRole = PhaseRole> =
+  | { readonly origin: "Explicit"; readonly role: Role; readonly path: string }
+  | { readonly origin: "RalphDirectory"; readonly role: Role; readonly path: string };
+
+export interface ReadyPhaseSnapshot<Role extends PhaseRole = PhaseRole> {
   readonly _tag: "Ready";
-  readonly role: "Work";
+  readonly role: Role;
   readonly prompt: string;
 }
 
-export interface PreparedWorkInvocation {
+export interface SkippedPhaseSnapshot<Role extends OptionalPhaseRole = OptionalPhaseRole> {
+  readonly _tag: "Skipped";
+  readonly role: Role;
+  readonly reason: "Missing" | "Blank";
+}
+
+export type OptionalPhaseSnapshot<Role extends OptionalPhaseRole> =
+  | ReadyPhaseSnapshot<Role>
+  | SkippedPhaseSnapshot<Role>;
+
+export type PhaseSnapshot = ReadyPhaseSnapshot | SkippedPhaseSnapshot;
+
+export interface IterationSnapshot {
+  readonly before: OptionalPhaseSnapshot<"BeforeWork">;
+  readonly work: ReadyPhaseSnapshot<"Work">;
+  readonly after: OptionalPhaseSnapshot<"AfterWork">;
+}
+
+export interface PreparedOnceSequence {
   readonly workingDirectory: string;
-  readonly work: WorkSnapshot;
+  readonly phases: IterationSnapshot;
+  readonly timeouts: TimeoutPolicy;
+  readonly yolo: boolean;
+}
+
+export interface InvocationRequest {
+  readonly workingDirectory: string;
+  readonly prompt: string;
   readonly timeouts: TimeoutPolicy;
   readonly yolo: boolean;
 }

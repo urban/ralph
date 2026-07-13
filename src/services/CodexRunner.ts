@@ -18,8 +18,8 @@ import {
   CodexTerminationError,
   IdleInvocationTimeout,
   type InvocationOutcome,
+  type InvocationRequest,
   MissingInvocationMarker,
-  type PreparedWorkInvocation,
 } from "../domain/WorkInvocation";
 import type { RalphExit } from "../errors/RalphExit";
 import { failWithExitCode, failWithMessage } from "../errors/RalphExit";
@@ -46,7 +46,7 @@ const renderCodexPrompt = (runContext: PreparedRunContext) => `<checklist>
 @${runContext.instructionsPath}
 </instructions>`;
 
-const makeWorkInvocationCommand = (request: PreparedWorkInvocation) =>
+const makeWorkInvocationCommand = (request: InvocationRequest) =>
   ChildProcess.make(
     "codex",
     request.yolo
@@ -55,7 +55,7 @@ const makeWorkInvocationCommand = (request: PreparedWorkInvocation) =>
           "--dangerously-bypass-approvals-and-sandbox",
           "-C",
           request.workingDirectory,
-          `${request.work.prompt}${genericCompletionProtocol}`,
+          `${request.prompt}${genericCompletionProtocol}`,
         ]
       : [
           "exec",
@@ -64,7 +64,7 @@ const makeWorkInvocationCommand = (request: PreparedWorkInvocation) =>
           "workspace-write",
           "-C",
           request.workingDirectory,
-          `${request.work.prompt}${genericCompletionProtocol}`,
+          `${request.prompt}${genericCompletionProtocol}`,
         ],
     {
       cwd: request.workingDirectory,
@@ -115,7 +115,7 @@ export class CodexRunner extends Context.Service<
   CodexRunner,
   {
     runInvocation(
-      request: PreparedWorkInvocation,
+      request: InvocationRequest,
     ): Effect.Effect<InvocationOutcome, CodexInvocationError>;
     run(runContext: PreparedRunContext): Effect.Effect<void, RalphExit>;
     runCapture(runContext: PreparedRunContext): Effect.Effect<string, RalphExit>;
@@ -128,7 +128,7 @@ export class CodexRunner extends Context.Service<
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const stdio = yield* Stdio.Stdio;
 
-      const runInvocationScoped = Effect.fnUntraced(function* (request: PreparedWorkInvocation) {
+      const runInvocationScoped = Effect.fnUntraced(function* (request: InvocationRequest) {
         const handle = yield* spawner
           .spawn(makeWorkInvocationCommand(request))
           .pipe(
