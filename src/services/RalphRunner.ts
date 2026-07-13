@@ -4,6 +4,7 @@ import type {
   InvocationOutcome,
   InvocationRequest,
   IterationSnapshot,
+  LoopFlagsInput,
   OnceFlagsInput,
   PhaseRole,
   PhaseSnapshot,
@@ -29,6 +30,7 @@ export class RalphRunner extends Context.Service<
   RalphRunner,
   {
     runOnce(input: OnceFlagsInput): Effect.Effect<void, RunOnceError>;
+    runLoop(input: LoopFlagsInput): Effect.Effect<void, RunOnceError>;
   }
 >()("ralph-effect/services/RalphRunner") {
   static readonly layer = Layer.effect(
@@ -128,22 +130,31 @@ export class RalphRunner extends Context.Service<
         return yield* runPhase(prepared, snapshot.after);
       });
 
+      const prepareWorkflow = Effect.fnUntraced(function* (input: OnceFlagsInput) {
+        const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
+        const prepared = yield* workspace.prepareWorkflow({
+          before: input.before,
+          work: input.work,
+          after: input.after,
+          ralphDir: input.ralphDir,
+          cwd: input.cwd,
+          yolo: input.yolo,
+          timeouts,
+        });
+
+        yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
+        return prepared;
+      });
+
+      const runIteration = Effect.fnUntraced(function* (prepared: PreparedWorkflow) {
+        const snapshot = yield* workspace.snapshotIteration(prepared);
+        return yield* runSequence(prepared, snapshot);
+      });
+
       const runOnce = Effect.fn("RalphRunner.runOnce")(function* (input: OnceFlagsInput) {
         const execution = Effect.gen(function* () {
-          const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
-          const prepared = yield* workspace.prepareWorkflow({
-            before: input.before,
-            work: input.work,
-            after: input.after,
-            ralphDir: input.ralphDir,
-            cwd: input.cwd,
-            yolo: input.yolo,
-            timeouts,
-          });
-
-          const snapshot = yield* workspace.snapshotIteration(prepared);
-          yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
-          const workflowComplete = yield* runSequence(prepared, snapshot);
+          const prepared = yield* prepareWorkflow(input);
+          const workflowComplete = yield* runIteration(prepared);
 
           return {
             invocationComplete: true,
@@ -164,7 +175,16 @@ export class RalphRunner extends Context.Service<
         return yield* result.failure;
       });
 
-      return RalphRunner.of({ runOnce });
+      const runLoop = Effect.fn("RalphRunner.runLoop")(function* (input: LoopFlagsInput) {
+        const prepared = yield* prepareWorkflow(input);
+
+        for (let iteration = 1; iteration <= input.iterations; iteration += 1) {
+          yield* writeOperatorOutput(`=== Iteration ${iteration} ===\n`);
+          yield* runIteration(prepared);
+        }
+      });
+
+      return RalphRunner.of({ runLoop, runOnce });
     }),
   );
 }

@@ -9,6 +9,8 @@ import {
   type InvocationOutcome,
   type InvocationRequest,
   type IterationSnapshot,
+  IterationLimit,
+  type LoopFlagsInput,
   MissingInvocationMarker,
   type OnceFlagsInput,
   type PreparedWorkflow,
@@ -30,6 +32,12 @@ const input = (overrides: Partial<OnceFlagsInput> = {}): OnceFlagsInput => ({
   idleTimeout: "5m",
   invocationTimeout: "30m",
   yolo: false,
+  ...overrides,
+});
+
+const loopInput = (overrides: Partial<LoopFlagsInput> = {}): LoopFlagsInput => ({
+  ...input(),
+  iterations: IterationLimit.make(3),
   ...overrides,
 });
 
@@ -63,11 +71,13 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   options: {
     readonly notificationDefects?: boolean;
     readonly snapshot?: IterationSnapshot;
+    readonly snapshotForCall?: (call: number) => IterationSnapshot;
   } = {},
 ) {
   const output = yield* Ref.make<Array<Uint8Array>>([]);
   const notifications = yield* Ref.make<Array<string>>([]);
   const workspaceCalls = yield* Ref.make(0);
+  const snapshotCalls = yield* Ref.make(0);
   const invocationCalls = yield* Ref.make<Array<string>>([]);
   const codexChecks = yield* Ref.make(0);
   const toBytes = (chunk: string | Uint8Array) =>
@@ -95,7 +105,13 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
     prepareRunContext: () => Effect.die("legacy runtime is not part of once"),
     prepareWorkflow: () =>
       Ref.update(workspaceCalls, (count) => count + 1).pipe(Effect.as(prepared)),
-    snapshotIteration: () => Effect.succeed(options.snapshot ?? defaultSnapshot),
+    snapshotIteration: () =>
+      Ref.modify(snapshotCalls, (call) => [
+        options.snapshotForCall === undefined
+          ? (options.snapshot ?? defaultSnapshot)
+          : options.snapshotForCall(call),
+        call + 1,
+      ]),
   });
   const hostTools = HostTools.of({
     commandExists: () => Effect.succeed(true),
@@ -109,19 +125,35 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
         ),
       ),
   });
-  const run = (onceInput: OnceFlagsInput) =>
-    Effect.gen(function* () {
-      const runner = yield* RalphRunner;
-      return yield* runner.runOnce(onceInput);
-    }).pipe(
+  const provideRunner = <A, E>(effect: Effect.Effect<A, E, RalphRunner>) =>
+    effect.pipe(
       Effect.provide(RalphRunner.layer),
       Effect.provideService(CodexRunner, codexRunner),
       Effect.provideService(RalphWorkspace, workspace),
       Effect.provideService(HostTools, hostTools),
       Effect.provideService(Stdio.Stdio, stdio),
     );
+  const run = (onceInput: OnceFlagsInput) =>
+    Effect.gen(function* () {
+      const runner = yield* RalphRunner;
+      return yield* runner.runOnce(onceInput);
+    }).pipe(provideRunner);
+  const runLoop = (loop: LoopFlagsInput) =>
+    Effect.gen(function* () {
+      const runner = yield* RalphRunner;
+      return yield* runner.runLoop(loop);
+    }).pipe(provideRunner);
 
-  return { codexChecks, invocationCalls, notifications, output, run, workspaceCalls };
+  return {
+    codexChecks,
+    invocationCalls,
+    notifications,
+    output,
+    run,
+    runLoop,
+    snapshotCalls,
+    workspaceCalls,
+  };
 });
 
 const readOutput = Effect.fnUntraced(function* (output: Ref.Ref<Array<Uint8Array>>) {
@@ -366,6 +398,88 @@ describe("RalphRunner.runOnce", () => {
       assert.strictEqual(yield* Ref.get(harness.workspaceCalls), 0);
       assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), []);
       assert.strictEqual((yield* Ref.get(harness.notifications)).length, 1);
+    }),
+  );
+});
+
+describe("RalphRunner.runLoop", () => {
+  it.effect(
+    "takes a fresh snapshot for each bounded iteration and keeps coordination state live",
+    () =>
+      Effect.gen(function* () {
+        const sharedState = yield* Ref.make("initial");
+        const observedByWork = yield* Ref.make<Array<string>>([]);
+        const snapshotForCall = (call: number): IterationSnapshot => ({
+          before: {
+            _tag: "Ready",
+            role: "BeforeWork",
+            prompt: `Prepare iteration ${call + 1}.`,
+          },
+          work: {
+            _tag: "Ready",
+            role: "Work",
+            prompt: `Work iteration ${call + 1}.`,
+          },
+          after: { _tag: "Skipped", role: "AfterWork", reason: "Missing" },
+        });
+        const harness = yield* makeHarness(
+          (request) => {
+            const coordinate = request.prompt.startsWith("Prepare")
+              ? Ref.set(sharedState, request.prompt)
+              : Ref.get(sharedState).pipe(
+                  Effect.flatMap((value) =>
+                    Ref.update(observedByWork, (observed) => [...observed, value]),
+                  ),
+                );
+            return coordinate.pipe(Effect.andThen(invocationComplete()));
+          },
+          { snapshotForCall },
+        );
+
+        yield* harness.runLoop(loopInput());
+
+        assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 3);
+        assert.strictEqual(yield* Ref.get(harness.codexChecks), 1);
+        assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
+          "Prepare iteration 1.",
+          "Work iteration 1.",
+          "Prepare iteration 2.",
+          "Work iteration 2.",
+          "Prepare iteration 3.",
+          "Work iteration 3.",
+        ]);
+        assert.deepStrictEqual(yield* Ref.get(observedByWork), [
+          "Prepare iteration 1.",
+          "Prepare iteration 2.",
+          "Prepare iteration 3.",
+        ]);
+        assert.deepStrictEqual(
+          (yield* readOutput(harness.output)).match(/=== Iteration \d+ ===/g),
+          ["=== Iteration 1 ===", "=== Iteration 2 ===", "=== Iteration 3 ==="],
+        );
+      }),
+  );
+
+  it.effect("short-circuits all later work when the shared phase sequence fails", () =>
+    Effect.gen(function* () {
+      const failure = new IdleInvocationTimeout({ message: "idle timeout" });
+      const harness = yield* makeHarness(
+        (request) =>
+          request.prompt === "Do the work." ? Effect.fail(failure) : invocationComplete(),
+        { snapshot: explicitThreePhaseSnapshot },
+      );
+
+      const result = yield* harness.runLoop(loopInput()).pipe(Effect.result);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure._tag, "IdleInvocationTimeout");
+      }
+      assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 1);
+      assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
+        "Prepare the work.",
+        "Do the work.",
+      ]);
     }),
   );
 });

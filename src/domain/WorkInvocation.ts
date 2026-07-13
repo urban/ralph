@@ -46,6 +46,16 @@ export interface OnceFlagsInput {
   readonly yolo: boolean;
 }
 
+export const IterationLimit = Schema.Int.check(Schema.isGreaterThan(0)).pipe(
+  Schema.brand("IterationLimit"),
+  Schema.annotate({ identifier: "IterationLimit" }),
+);
+export type IterationLimit = typeof IterationLimit.Type;
+
+export interface LoopFlagsInput extends OnceFlagsInput {
+  readonly iterations: IterationLimit;
+}
+
 export interface OnceSequenceInput {
   readonly before: Option.Option<string>;
   readonly work: Option.Option<string>;

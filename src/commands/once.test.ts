@@ -17,6 +17,7 @@ it.effect("once parses aliases, yolo, and compact timeout defaults before delega
     const captured = yield* Ref.make(Option.none<OnceFlagsInput>());
     const runner = RalphRunner.of({
       runOnce: (input) => Ref.set(captured, Option.some(input)),
+      runLoop: () => Effect.die("loop is not part of once parsing"),
     });
 
     yield* runOnce([
@@ -52,6 +53,7 @@ it.effect("once passes explicit timeout overrides to the runner", () =>
     const captured = yield* Ref.make(Option.none<OnceFlagsInput>());
     const runner = RalphRunner.of({
       runOnce: (input) => Ref.set(captured, Option.some(input)),
+      runLoop: () => Effect.die("loop is not part of once parsing"),
     });
 
     yield* runOnce([

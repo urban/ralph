@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { Flag } from "effect/unstable/cli";
 
 import type { SharedFlagsInput } from "../domain/Ralph";
+import { IterationLimit } from "../domain/WorkInvocation";
 import { HostTools } from "../services/HostTools";
 import { RalphWorkspace } from "../services/RalphWorkspace";
 
@@ -81,7 +82,8 @@ const iterationsFlag = Flag.integer("iterations").pipe(
     (value) => value > 0,
     (value) => `Expected a positive integer, got ${value}`,
   ),
-  Flag.withDefault(10),
+  Flag.map(IterationLimit.make),
+  Flag.withDefault(IterationLimit.make(10)),
 );
 
 const prepareCodexRunContext = Effect.fn("prepareCodexRunContext")(function* (
