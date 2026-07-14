@@ -1,7 +1,5 @@
 import { Flag } from "effect/unstable/cli";
 
-import { IterationLimit } from "../domain/WorkInvocation";
-
 const makePhaseFlags = () => ({
   before: Flag.string("before").pipe(
     Flag.withAlias("b"),
@@ -41,15 +39,4 @@ const makePhaseFlags = () => ({
   ),
 });
 
-const iterationsFlag = Flag.integer("iterations").pipe(
-  Flag.withAlias("n"),
-  Flag.withDescription("Number of iterations to run"),
-  Flag.filter(
-    (value) => value > 0,
-    (value) => `Expected a positive integer, got ${value}`,
-  ),
-  Flag.map(IterationLimit.make),
-  Flag.withDefault(IterationLimit.make(10)),
-);
-
-export { iterationsFlag, makePhaseFlags };
+export { makePhaseFlags };

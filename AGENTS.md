@@ -27,6 +27,14 @@ Before completing a change, check:
 3. Do cross-package tests know only public inputs and outputs?
 4. Have internal implementation details stayed behind their owning interface?
 
+## Reuse and Helper Placement
+
+- Treat DRY as single ownership of knowledge, rules, and transformations—not elimination of superficial repetition. Prefer small duplication over a premature or misplaced abstraction.
+- Keep one-off implementation details private and local. Extract only to centralize domain knowledge, hide meaningful complexity, or support proven reuse.
+- Keep domain behavior in its owning module. Place only truly domain-agnostic, pure, shared helpers in the owning package's established utility module; do not create catch-all utility folders or violate dependency direction.
+- Before adding a helper, find its proper owner and extend that module only when the behavior fits its responsibility.
+- Inline trivial one-off expressions. Avoid pass-through wrappers or aliases; extracted names must communicate behavior or domain intent.
+
 <!-- effect:start -->
 
 ## Effect Best Practices

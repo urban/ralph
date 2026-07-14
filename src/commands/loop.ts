@@ -1,10 +1,21 @@
 import { Effect } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command, Flag } from "effect/unstable/cli";
 
-import type { LoopFlagsInput } from "../domain/WorkInvocation";
+import { IterationLimit, type LoopFlagsInput } from "../domain/WorkInvocation";
 import { failWithMessage } from "../errors/RalphExit";
 import { RalphRunner } from "../services/RalphRunner";
-import { iterationsFlag, makePhaseFlags } from "./shared";
+import { makePhaseFlags } from "./phaseFlags";
+
+const iterationsFlag = Flag.integer("iterations").pipe(
+  Flag.withAlias("n"),
+  Flag.withDescription("Number of iterations to run"),
+  Flag.filter(
+    (value) => value > 0,
+    (value) => `Expected a positive integer, got ${value}`,
+  ),
+  Flag.map(IterationLimit.make),
+  Flag.withDefault(IterationLimit.make(10)),
+);
 
 const loopFlags = {
   ...makePhaseFlags(),

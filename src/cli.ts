@@ -36,10 +36,8 @@ const program = Effect.scoped(
   }),
 );
 
-const runCli = () => BunRuntime.runMain(program);
-
 if (import.meta.main) {
-  runCli();
+  BunRuntime.runMain(program);
 }
 
-export { MainLayer, cli, program, runCli };
+export { MainLayer, cli, program };

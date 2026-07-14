@@ -4,7 +4,7 @@ import { Command } from "effect/unstable/cli";
 import type { OnceFlagsInput } from "../domain/WorkInvocation";
 import { failWithMessage } from "../errors/RalphExit";
 import { RalphRunner } from "../services/RalphRunner";
-import { makePhaseFlags } from "./shared";
+import { makePhaseFlags } from "./phaseFlags";
 
 const onceFlags = makePhaseFlags();
 
