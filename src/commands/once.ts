@@ -1,19 +1,20 @@
 import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 
-import type { SharedFlagsInput } from "../domain/Ralph";
-import { CodexRunner } from "../services/CodexRunner";
-import { makeSharedFlags, prepareCodexRunContext } from "./shared";
+import type { OnceFlagsInput } from "../domain/WorkInvocation";
+import { failWithMessage } from "../errors/RalphExit";
+import { RalphRunner } from "../services/RalphRunner";
+import { makePhaseFlags } from "./phaseFlags";
 
-const handler = Effect.fn("commandOnce.handler")(function* (input: SharedFlagsInput) {
-  const codexRunner = yield* CodexRunner;
-  const runContext = yield* prepareCodexRunContext(input);
+const onceFlags = makePhaseFlags();
 
-  yield* codexRunner.run(runContext);
+const handler = Effect.fn("commandOnce.handler")(function* (input: OnceFlagsInput) {
+  const runner = yield* RalphRunner;
+  yield* runner.runOnce(input).pipe(Effect.catch((error) => failWithMessage(error.message)));
 });
 
-const commandOnce = Command.make("once", makeSharedFlags(), handler).pipe(
-  Command.withDescription("Run one Codex pass"),
+const commandOnce = Command.make("once", onceFlags, handler).pipe(
+  Command.withDescription("Run one supervised work invocation"),
 );
 
-export { commandOnce };
+export { commandOnce, onceFlags };
