@@ -103,7 +103,6 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
   const workspaceCalls = yield* Ref.make(0);
   const snapshotCalls = yield* Ref.make(0);
   const invocationCalls = yield* Ref.make<Array<string>>([]);
-  const codexChecks = yield* Ref.make(0);
   const toBytes = (chunk: string | Uint8Array) =>
     typeof chunk === "string" ? encoder.encode(chunk) : chunk;
   const stdio = Stdio.make({
@@ -135,8 +134,6 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
     cleanupIterationSnapshot: () => Effect.void,
   });
   const hostTools = HostTools.of({
-    commandExists: () => Effect.succeed(true),
-    ensureCommandAvailable: () => Ref.update(codexChecks, (count) => count + 1),
     notifyIfAvailable: (message) =>
       Ref.update(notifications, (messages) => [...messages, message]).pipe(
         Effect.andThen(
@@ -166,7 +163,6 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
     }).pipe(provideRunner);
 
   return {
-    codexChecks,
     invocationCalls,
     notifications,
     output,
@@ -210,7 +206,6 @@ describe("RalphRunner.runOnce", () => {
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph once succeeded: invocation complete.",
       ]);
-      assert.strictEqual(yield* Ref.get(harness.codexChecks), 1);
     }),
   );
 
@@ -475,7 +470,6 @@ describe("RalphRunner.runLoop", () => {
         yield* harness.runLoop(loopInput());
 
         assert.strictEqual(yield* Ref.get(harness.snapshotCalls), 3);
-        assert.strictEqual(yield* Ref.get(harness.codexChecks), 1);
         assert.deepStrictEqual(yield* Ref.get(harness.invocationCalls), [
           snapshotPaths.iteration(1).before,
           snapshotPaths.iteration(1).work,

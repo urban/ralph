@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Duration, Effect, Fiber, Option, Ref, Schedule, Sink, Stdio, Stream } from "effect";
+import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -221,6 +222,44 @@ describe("CodexRunner.runInvocation", () => {
       assert.strictEqual(error._tag, "CodexExitError");
       if (error._tag === "CodexExitError") {
         assert.strictEqual(error.exitCode, 17);
+      }
+    }),
+  );
+
+  it.effect("maps spawn failures from the real codex invocation", () =>
+    Effect.gen(function* () {
+      const stdio = Stdio.make({
+        args: Effect.succeed([]),
+        stdin: Stream.empty,
+        stdout: () => Sink.drain,
+        stderr: () => Sink.drain,
+      });
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.fail(
+          PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            pathOrDescriptor: "codex",
+            description: "spawn codex",
+          }),
+        ),
+      );
+      const error = yield* provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* Effect.flip(runner.runInvocation(request()));
+        }),
+        spawner,
+        stdio,
+      );
+
+      assert.strictEqual(error._tag, "CodexSpawnError");
+      if (error._tag === "CodexSpawnError") {
+        assert.strictEqual(
+          error.message,
+          "Could not start Codex: NotFound: ChildProcess.spawn (codex): spawn codex",
+        );
       }
     }),
   );

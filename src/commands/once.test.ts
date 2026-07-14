@@ -148,8 +148,6 @@ it.effect("once composes parsed input through the fake Codex boundary", () =>
       cleanupIterationSnapshot: () => Effect.void,
     });
     const hostTools = HostTools.of({
-      commandExists: () => Effect.succeed(true),
-      ensureCommandAvailable: () => Effect.void,
       notifyIfAvailable: () => Ref.update(notifications, (count) => count + 1),
     });
     const stdio = Stdio.make({

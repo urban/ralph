@@ -49,8 +49,6 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
       ),
   });
   const hostTools = HostTools.of({
-    commandExists: () => Effect.succeed(true),
-    ensureCommandAvailable: () => Effect.void,
     notifyIfAvailable: (message) => Ref.update(notifications, (messages) => [...messages, message]),
   });
   const stdio = Stdio.make({

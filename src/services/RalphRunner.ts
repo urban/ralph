@@ -138,7 +138,7 @@ export class RalphRunner extends Context.Service<
 
       const prepareWorkflow = Effect.fnUntraced(function* (input: OnceFlagsInput) {
         const timeouts = yield* decodeTimeoutPolicy(input.idleTimeout, input.invocationTimeout);
-        const prepared = yield* workspace.prepareWorkflow({
+        return yield* workspace.prepareWorkflow({
           before: input.before,
           work: input.work,
           after: input.after,
@@ -147,9 +147,6 @@ export class RalphRunner extends Context.Service<
           yolo: input.yolo,
           timeouts,
         });
-
-        yield* hostTools.ensureCommandAvailable("codex", "Codex CLI");
-        return prepared;
       });
 
       const runIteration = Effect.fnUntraced(function* (prepared: PreparedWorkflow) {
