@@ -1,7 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
-import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Result, Sink, Stdio, Stream } from "effect";
-import { join } from "node:path";
+import { assert, layer } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Path, Ref, Result, Sink, Stdio, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import {
@@ -57,14 +56,18 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
       ),
     stderr: () => Sink.drain,
   });
-  const orchestrationLayer = RalphRunner.layer.pipe(Layer.provideMerge(RalphWorkspace.layer));
+  const dependencies = Layer.mergeAll(
+    Layer.succeed(CodexRunner, codexRunner),
+    Layer.succeed(HostTools, hostTools),
+    Layer.succeed(Stdio.Stdio, stdio),
+  );
+  const orchestrationLayer = RalphRunner.layer.pipe(
+    Layer.provideMerge(RalphWorkspace.layer),
+    Layer.provideMerge(dependencies),
+  );
+  const orchestrationContext = yield* Layer.build(orchestrationLayer);
   const run = (args: ReadonlyArray<string>) =>
-    runOnce(args).pipe(
-      Effect.provide(orchestrationLayer),
-      Effect.provideService(CodexRunner, codexRunner),
-      Effect.provideService(HostTools, hostTools),
-      Effect.provideService(Stdio.Stdio, stdio),
-    );
+    runOnce(args).pipe(Effect.provide(orchestrationContext));
 
   return { invocations, notifications, output, run };
 });
@@ -82,21 +85,23 @@ const writePhaseFiles = Effect.fnUntraced(function* (
   },
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(directory, { recursive: true });
-  yield* fileSystem.writeFileString(join(directory, "BEFORE_WORK.md"), prompts.before);
-  yield* fileSystem.writeFileString(join(directory, "WORK.md"), prompts.work);
-  yield* fileSystem.writeFileString(join(directory, "AFTER_WORK.md"), prompts.after);
+  yield* fileSystem.writeFileString(path.join(directory, "BEFORE_WORK.md"), prompts.before);
+  yield* fileSystem.writeFileString(path.join(directory, "WORK.md"), prompts.work);
+  yield* fileSystem.writeFileString(path.join(directory, "AFTER_WORK.md"), prompts.after);
 });
 
-describe("once three-phase workflow", () => {
+layer(BunServices.layer)("once three-phase workflow", (it) => {
   it.effect("runs explicit sources in order with precedence and snapshot isolation", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "ralph-once-explicit-",
       });
-      const directorySources = join(workspace, ".ralph");
-      const explicitSources = join(workspace, "explicit");
+      const directorySources = path.join(workspace, ".ralph");
+      const explicitSources = path.join(workspace, "explicit");
 
       yield* writePhaseFiles(directorySources, {
         before: "Directory before.\n",
@@ -117,11 +122,11 @@ describe("once three-phase workflow", () => {
           Effect.flatMap((instructions) =>
             instructions === "Explicit before.\n"
               ? fileSystem
-                  .writeFileString(join(explicitSources, "WORK.md"), "Explicit work v2.\n")
+                  .writeFileString(path.join(explicitSources, "WORK.md"), "Explicit work v2.\n")
                   .pipe(
                     Effect.andThen(
                       fileSystem.writeFileString(
-                        join(explicitSources, "AFTER_WORK.md"),
+                        path.join(explicitSources, "AFTER_WORK.md"),
                         "Explicit after v2.\n",
                       ),
                     ),
@@ -170,14 +175,15 @@ describe("once three-phase workflow", () => {
         "Ralph once succeeded: invocation complete.",
         "Ralph once succeeded: invocation complete.",
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect("runs directory phases equivalently and reports optional skips", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-once-dir-" });
-      const phaseDirectory = join(workspace, ".ralph");
+      const phaseDirectory = path.join(workspace, ".ralph");
 
       yield* writePhaseFiles(phaseDirectory, {
         before: "Prepare.\n",
@@ -188,8 +194,8 @@ describe("once three-phase workflow", () => {
       const args = ["--cwd", workspace, "--ralph-dir", "./.ralph"];
 
       yield* harness.run(args);
-      yield* fileSystem.remove(join(phaseDirectory, "BEFORE_WORK.md"));
-      yield* fileSystem.writeFileString(join(phaseDirectory, "AFTER_WORK.md"), " \n");
+      yield* fileSystem.remove(path.join(phaseDirectory, "BEFORE_WORK.md"));
+      yield* fileSystem.writeFileString(path.join(phaseDirectory, "AFTER_WORK.md"), " \n");
       yield* harness.run(args);
 
       assert.deepStrictEqual(yield* Ref.get(harness.invocations), [
@@ -201,14 +207,15 @@ describe("once three-phase workflow", () => {
       const output = yield* readOutput(harness.output);
       assert.include(output, "--- Before work phase skipped (missing) ---");
       assert.include(output, "--- After work phase skipped (blank) ---");
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect("short-circuits composed completion and failure outcomes", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-once-stop-" });
-      const phaseDirectory = join(workspace, ".ralph");
+      const phaseDirectory = path.join(workspace, ".ralph");
 
       yield* writePhaseFiles(phaseDirectory, {
         before: "Prepare.\n",
@@ -254,6 +261,6 @@ describe("once three-phase workflow", () => {
       assert.deepStrictEqual(yield* Ref.get(failureHarness.notifications), [
         "Ralph once failed: work failed",
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 });

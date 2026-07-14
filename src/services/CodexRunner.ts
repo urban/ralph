@@ -67,7 +67,7 @@ export class CodexRunner extends Context.Service<
       request: InvocationRequest,
     ): Effect.Effect<InvocationOutcome, CodexInvocationError>;
   }
->()("ralph-effect/services/CodexRunner") {
+>()("@urban/ralph/services/CodexRunner") {
   static readonly layer = Layer.effect(
     CodexRunner,
     Effect.gen(function* () {

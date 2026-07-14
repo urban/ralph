@@ -1,6 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
-import { assert, describe, it } from "@effect/vitest";
-import { Effect, Option, Ref, Result } from "effect";
+import { assert, layer } from "@effect/vitest";
+import { Effect, Option, Ref, Result, Schema } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import type { LoopFlagsInput } from "../domain/WorkInvocation";
@@ -17,7 +17,7 @@ const makeRunner = (captured: Ref.Ref<Array<LoopFlagsInput>>) =>
     runLoop: (input) => Ref.update(captured, (inputs) => [...inputs, input]),
   });
 
-describe("loop command", () => {
+layer(BunServices.layer)("loop command", (it) => {
   it.effect("uses ten iterations by default and shares the phase flags", () =>
     Effect.gen(function* () {
       const captured = yield* Ref.make<Array<LoopFlagsInput>>([]);
@@ -32,10 +32,7 @@ describe("loop command", () => {
         "-C",
         "./project",
         "--yolo",
-      ]).pipe(
-        Effect.provideService(RalphRunner, makeRunner(captured)),
-        Effect.provide(BunServices.layer),
-      );
+      ]).pipe(Effect.provideService(RalphRunner, makeRunner(captured)));
 
       const inputs = yield* Ref.get(captured);
       assert.strictEqual(inputs.length, 1);
@@ -61,7 +58,6 @@ describe("loop command", () => {
 
       yield* runLoop(["--work", "./WORK.md", "-n", "3"]).pipe(
         Effect.provideService(RalphRunner, makeRunner(captured)),
-        Effect.provide(BunServices.layer),
       );
 
       const inputs = yield* Ref.get(captured);
@@ -83,14 +79,13 @@ describe("loop command", () => {
 
       const result = yield* runLoop(["--work", "./WORK.md"]).pipe(
         Effect.provideService(RalphRunner, runner),
-        Effect.provide(BunServices.layer),
         Effect.result,
       );
 
       assert.isTrue(Result.isFailure(result));
       if (Result.isFailure(result)) {
-        assert.isTrue(result.failure instanceof RalphExit);
-        if (result.failure instanceof RalphExit) {
+        assert.isTrue(Schema.is(RalphExit)(result.failure));
+        if (Schema.is(RalphExit)(result.failure)) {
           assert.strictEqual(result.failure.exitCode, 1);
         }
       }
@@ -105,7 +100,6 @@ describe("loop command", () => {
       const results = yield* Effect.forEach(["0", "-2", "many"], (iterations) =>
         runLoop(["--work", "./WORK.md", "--iterations", iterations]).pipe(
           Effect.provideService(RalphRunner, runner),
-          Effect.provide(BunServices.layer),
           Effect.result,
         ),
       );

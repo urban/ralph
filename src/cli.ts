@@ -29,7 +29,12 @@ const MainLayer = Layer.mergeAll(
   Logger.layer([cliLogger]),
 );
 
-const program = cli.pipe(Command.run({ version: pkg.version }), Effect.provide(MainLayer));
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const context = yield* Layer.build(MainLayer);
+    return yield* cli.pipe(Command.run({ version: pkg.version }), Effect.provide(context));
+  }),
+);
 
 const runCli = () => BunRuntime.runMain(program);
 

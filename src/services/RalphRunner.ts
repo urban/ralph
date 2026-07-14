@@ -38,7 +38,7 @@ export class RalphRunner extends Context.Service<
     runOnce(input: OnceFlagsInput): Effect.Effect<void, RunOnceError>;
     runLoop(input: LoopFlagsInput): Effect.Effect<void, RunLoopError>;
   }
->()("ralph-effect/services/RalphRunner") {
+>()("@urban/ralph/services/RalphRunner") {
   static readonly layer = Layer.effect(
     RalphRunner,
     Effect.gen(function* () {

@@ -1,6 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
-import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Stream } from "effect";
+import { assert, layer } from "@effect/vitest";
+import { Config, Effect, FileSystem, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
@@ -83,7 +83,7 @@ const makeCliRunner = Effect.fnUntraced(function* (
   environment: Readonly<Record<string, string>>,
 ) {
   const path = yield* Path.Path;
-  const inheritedPath = process.env.PATH ?? "";
+  const inheritedPath = yield* Config.string("PATH").pipe(Config.withDefault(""));
   const cliPath = path.join(repositoryRoot, "src", "cli.ts");
 
   return (args: ReadonlyArray<string>) =>
@@ -99,7 +99,7 @@ const makeCliRunner = Effect.fnUntraced(function* (
     );
 });
 
-describe("breaking-release adoption", () => {
+layer(BunServices.layer)("breaking-release adoption", (it) => {
   it.effect("walks from blank init through once and loop completion with notifications", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -185,7 +185,7 @@ describe("breaking-release adoption", () => {
         notifications,
         "notify Ralph loop succeeded: workflow complete after 2 iterations.",
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect(
@@ -248,7 +248,7 @@ describe("breaking-release adoption", () => {
         }
 
         assert.notStrictEqual(probe, ChildProcessSpawner.ExitCode(0));
-      }).pipe(Effect.provide(BunServices.layer)),
+      }),
     { timeout: 10_000 },
   );
 });

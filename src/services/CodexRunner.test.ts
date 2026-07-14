@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Option, Ref, Schedule, Sink, Stdio, Stream } from "effect";
+import { Duration, Effect, Fiber, Layer, Option, Ref, Schedule, Sink, Stdio, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
@@ -105,16 +105,17 @@ const makeHarness = Effect.fnUntraced(function* (
   return { ...harness, streamsDrained };
 });
 
-const provideHarness = <A, E>(
+const provideHarness = Effect.fnUntraced(function* <A, E>(
   effect: Effect.Effect<A, E, CodexRunner>,
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   stdio: Stdio.Stdio,
-) =>
-  effect.pipe(
-    Effect.provide(CodexRunner.layer),
+) {
+  const context = yield* Layer.build(CodexRunner.layer).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.provideService(Stdio.Stdio, stdio),
   );
+  return yield* effect.pipe(Effect.provide(context));
+});
 
 const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string =>
   chunks.map((chunk) => decoder.decode(chunk)).join("");

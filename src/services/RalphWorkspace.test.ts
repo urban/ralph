@@ -1,7 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { expect, layer } from "@effect/vitest";
-import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option } from "effect";
-import { join } from "node:path";
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import type {
   IterationSnapshot,
@@ -95,10 +94,11 @@ const expectFailureMessage = (result: Exit.Exit<unknown, unknown>, message: stri
 layer(workspaceLayer)("RalphWorkspace", (it) => {
   it.effect("init creates exactly three empty phase files from the launch directory", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
+      const projectDirectory = path.join(tempDirectory, "project");
 
       yield* withWorkingDirectory(tempDirectory, workspace.init(Option.some("./project")));
 
@@ -107,9 +107,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
         "BEFORE_WORK.md",
         "WORK.md",
       ]);
-      expect(yield* fileSystem.readFileString(join(projectDirectory, "BEFORE_WORK.md"))).toBe("");
-      expect(yield* fileSystem.readFileString(join(projectDirectory, "WORK.md"))).toBe("");
-      expect(yield* fileSystem.readFileString(join(projectDirectory, "AFTER_WORK.md"))).toBe("");
+      expect(yield* fileSystem.readFileString(path.join(projectDirectory, "BEFORE_WORK.md"))).toBe(
+        "",
+      );
+      expect(yield* fileSystem.readFileString(path.join(projectDirectory, "WORK.md"))).toBe("");
+      expect(yield* fileSystem.readFileString(path.join(projectDirectory, "AFTER_WORK.md"))).toBe(
+        "",
+      );
 
       const blankWork = yield* withWorkingDirectory(
         tempDirectory,
@@ -127,17 +131,18 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       const canonicalProjectDirectory = yield* fileSystem.realPath(projectDirectory);
       expect(blankWork._tag).toBe("BlankWork");
       expect(blankWork.message).toBe(
-        `Work instructions are required; work file is blank: ${join(canonicalProjectDirectory, "WORK.md")}`,
+        `Work instructions are required; work file is blank: ${path.join(canonicalProjectDirectory, "WORK.md")}`,
       );
     }),
   );
 
   it.effect("init backs up every phase file before replacing it with an empty file", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
+      const projectDirectory = path.join(tempDirectory, "project");
       const originals: ReadonlyArray<readonly [string, string]> = [
         ["BEFORE_WORK.md", "old before\n"],
         ["WORK.md", "old work\n"],
@@ -148,7 +153,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       yield* Effect.forEach(
         originals,
         ([fileName, content]) =>
-          fileSystem.writeFileString(join(projectDirectory, fileName), content),
+          fileSystem.writeFileString(path.join(projectDirectory, fileName), content),
         { discard: true },
       );
 
@@ -161,10 +166,12 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
           Effect.gen(function* () {
             const backup = files.find((candidate) => candidate.startsWith(`${fileName}.bak.`));
             expect(backup).toBeDefined();
-            expect(yield* fileSystem.readFileString(join(projectDirectory, fileName))).toBe("");
+            expect(yield* fileSystem.readFileString(path.join(projectDirectory, fileName))).toBe(
+              "",
+            );
 
             if (backup !== undefined) {
-              expect(yield* fileSystem.readFileString(join(projectDirectory, backup))).toBe(
+              expect(yield* fileSystem.readFileString(path.join(projectDirectory, backup))).toBe(
                 content,
               );
             }
@@ -176,10 +183,11 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("init rejects file targets", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const targetFile = join(tempDirectory, "not-a-directory");
+      const targetFile = path.join(tempDirectory, "not-a-directory");
 
       yield* fileSystem.writeFileString(targetFile, "nope\n");
 
@@ -195,11 +203,12 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("keeps stable sources while refreshing immutable snapshots", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const workPath = join(projectDirectory, "WORK.md");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const workPath = path.join(projectDirectory, "WORK.md");
 
       yield* fileSystem.makeDirectory(projectDirectory);
       yield* fileSystem.writeFileString(workPath, "Do the approved work.\n");
@@ -226,7 +235,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
       expect(workflow.sources.work).toEqual({
         origin: "Explicit",
         role: "Work",
-        path: join(workflow.workingDirectory, "WORK.md"),
+        path: path.join(workflow.workingDirectory, "WORK.md"),
       });
       expect(firstSnapshot.work.contents).toBe("Do the approved work.\n");
       expect(nextSnapshot.work.contents).toBe("Changed after snapshot.\n");
@@ -236,12 +245,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("isolates later phase prompts from same-sequence edits", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const beforePath = join(tempDirectory, "BEFORE.md");
-      const workPath = join(tempDirectory, "WORK.md");
-      const afterPath = join(tempDirectory, "AFTER.md");
+      const beforePath = path.join(tempDirectory, "BEFORE.md");
+      const workPath = path.join(tempDirectory, "WORK.md");
+      const afterPath = path.join(tempDirectory, "AFTER.md");
 
       yield* fileSystem.writeFileString(beforePath, "Prepare.\n");
       yield* fileSystem.writeFileString(workPath, "Work.\n");
@@ -282,13 +292,17 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("accepts WORK.md from a valid runtime directory source", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const ralphDirectory = join(tempDirectory, ".ralph");
+      const ralphDirectory = path.join(tempDirectory, ".ralph");
 
       yield* fileSystem.makeDirectory(ralphDirectory);
-      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Run from directory.\n");
+      yield* fileSystem.writeFileString(
+        path.join(ralphDirectory, "WORK.md"),
+        "Run from directory.\n",
+      );
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
@@ -311,24 +325,28 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("uses cwd-relative explicit phases over directory phases", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const ralphDirectory = join(projectDirectory, ".ralph");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const ralphDirectory = path.join(projectDirectory, ".ralph");
 
       yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
       yield* fileSystem.writeFileString(
-        join(ralphDirectory, "BEFORE_WORK.md"),
+        path.join(ralphDirectory, "BEFORE_WORK.md"),
         "Directory before.\n",
       );
-      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Directory work.\n");
+      yield* fileSystem.writeFileString(path.join(ralphDirectory, "WORK.md"), "Directory work.\n");
       yield* fileSystem.writeFileString(
-        join(ralphDirectory, "AFTER_WORK.md"),
+        path.join(ralphDirectory, "AFTER_WORK.md"),
         "Directory after.\n",
       );
-      yield* fileSystem.writeFileString(join(projectDirectory, "DISABLED_BEFORE.md"), " \n");
-      yield* fileSystem.writeFileString(join(projectDirectory, "CUSTOM_WORK.md"), "Custom work.\n");
+      yield* fileSystem.writeFileString(path.join(projectDirectory, "DISABLED_BEFORE.md"), " \n");
+      yield* fileSystem.writeFileString(
+        path.join(projectDirectory, "CUSTOM_WORK.md"),
+        "Custom work.\n",
+      );
 
       const prepared = yield* withWorkingDirectory(
         tempDirectory,
@@ -364,11 +382,12 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("fails when an explicit optional phase is missing", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
 
-      yield* fileSystem.writeFileString(join(tempDirectory, "WORK.md"), "Required work.\n");
+      yield* fileSystem.writeFileString(path.join(tempDirectory, "WORK.md"), "Required work.\n");
       const error = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
@@ -391,19 +410,20 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("keeps explicit and directory phase paths inside cwd", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const ralphDirectory = join(projectDirectory, ".ralph");
-      const outsideBefore = join(tempDirectory, "outside-before.md");
-      const outsideAfter = join(tempDirectory, "outside-after.md");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const ralphDirectory = path.join(projectDirectory, ".ralph");
+      const outsideBefore = path.join(tempDirectory, "outside-before.md");
+      const outsideAfter = path.join(tempDirectory, "outside-after.md");
 
       yield* fileSystem.makeDirectory(ralphDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), "Required work.\n");
+      yield* fileSystem.writeFileString(path.join(ralphDirectory, "WORK.md"), "Required work.\n");
       yield* fileSystem.writeFileString(outsideBefore, "Outside before.\n");
       yield* fileSystem.writeFileString(outsideAfter, "Outside after.\n");
-      yield* fileSystem.symlink(outsideBefore, join(ralphDirectory, "BEFORE_WORK.md"));
+      yield* fileSystem.symlink(outsideBefore, path.join(ralphDirectory, "BEFORE_WORK.md"));
 
       const inferred = yield* withWorkingDirectory(
         tempDirectory,
@@ -444,13 +464,14 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("revalidates a ready source when snapshotting", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const workPath = join(projectDirectory, "WORK.md");
-      const afterPath = join(projectDirectory, "AFTER.md");
-      const outsideAfter = join(tempDirectory, "outside-after.md");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const workPath = path.join(projectDirectory, "WORK.md");
+      const afterPath = path.join(projectDirectory, "AFTER.md");
+      const outsideAfter = path.join(tempDirectory, "outside-after.md");
 
       yield* fileSystem.makeDirectory(projectDirectory);
       yield* fileSystem.writeFileString(workPath, "Required work.\n");
@@ -480,10 +501,11 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("rejects missing and blank inferred work", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const ralphDirectory = join(tempDirectory, ".ralph");
+      const ralphDirectory = path.join(tempDirectory, ".ralph");
 
       yield* fileSystem.makeDirectory(ralphDirectory);
       const missing = yield* withWorkingDirectory(
@@ -492,7 +514,7 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
           prepareSnapshot(workspace, makeOnceSequenceInput({ ralphDir: Option.some("./.ralph") })),
         ),
       );
-      yield* fileSystem.writeFileString(join(ralphDirectory, "WORK.md"), " \n");
+      yield* fileSystem.writeFileString(path.join(ralphDirectory, "WORK.md"), " \n");
       const blank = yield* withWorkingDirectory(
         tempDirectory,
         Effect.flip(
@@ -548,10 +570,11 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("rejects missing and non-file work paths", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const directoryPath = join(tempDirectory, "work-directory");
+      const directoryPath = path.join(tempDirectory, "work-directory");
 
       yield* fileSystem.makeDirectory(directoryPath);
 
@@ -578,12 +601,13 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("rejects unreadable UTF-8 and blank work", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
 
-      yield* fileSystem.writeFile(join(tempDirectory, "invalid.md"), new Uint8Array([255]));
-      yield* fileSystem.writeFileString(join(tempDirectory, "blank.md"), " \n\t");
+      yield* fileSystem.writeFile(path.join(tempDirectory, "invalid.md"), new Uint8Array([255]));
+      yield* fileSystem.writeFileString(path.join(tempDirectory, "blank.md"), " \n\t");
 
       const unreadable = yield* withWorkingDirectory(
         tempDirectory,
@@ -605,16 +629,17 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("rejects outside-cwd and sibling-prefix work paths", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const siblingDirectory = join(tempDirectory, "project-sibling");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const siblingDirectory = path.join(tempDirectory, "project-sibling");
 
       yield* fileSystem.makeDirectory(projectDirectory);
       yield* fileSystem.makeDirectory(siblingDirectory);
-      yield* fileSystem.writeFileString(join(tempDirectory, "outside.md"), "outside\n");
-      yield* fileSystem.writeFileString(join(siblingDirectory, "WORK.md"), "sibling\n");
+      yield* fileSystem.writeFileString(path.join(tempDirectory, "outside.md"), "outside\n");
+      yield* fileSystem.writeFileString(path.join(siblingDirectory, "WORK.md"), "sibling\n");
 
       const outside = yield* withWorkingDirectory(
         tempDirectory,
@@ -648,15 +673,16 @@ layer(workspaceLayer)("RalphWorkspace", (it) => {
 
   it.effect("rejects a symlink escape from cwd", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const workspace = yield* RalphWorkspace;
       const fileSystem = yield* FileSystem.FileSystem;
       const tempDirectory = yield* makeTempDirectory();
-      const projectDirectory = join(tempDirectory, "project");
-      const outsideWorkPath = join(tempDirectory, "outside.md");
+      const projectDirectory = path.join(tempDirectory, "project");
+      const outsideWorkPath = path.join(tempDirectory, "outside.md");
 
       yield* fileSystem.makeDirectory(projectDirectory);
       yield* fileSystem.writeFileString(outsideWorkPath, "outside\n");
-      yield* fileSystem.symlink(outsideWorkPath, join(projectDirectory, "WORK.md"));
+      yield* fileSystem.symlink(outsideWorkPath, path.join(projectDirectory, "WORK.md"));
 
       const error = yield* withWorkingDirectory(
         tempDirectory,

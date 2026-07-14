@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Duration, Effect, Option, Ref, Result, Sink, Stdio, Stream } from "effect";
+import { Duration, Effect, Layer, Option, Ref, Result, Sink, Stdio, Stream } from "effect";
 
 import {
   AbsoluteInvocationTimeout,
@@ -143,14 +143,14 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
         ),
       ),
   });
+  const runnerContext = yield* Layer.build(RalphRunner.layer).pipe(
+    Effect.provideService(CodexRunner, codexRunner),
+    Effect.provideService(RalphWorkspace, workspace),
+    Effect.provideService(HostTools, hostTools),
+    Effect.provideService(Stdio.Stdio, stdio),
+  );
   const provideRunner = <A, E>(effect: Effect.Effect<A, E, RalphRunner>) =>
-    effect.pipe(
-      Effect.provide(RalphRunner.layer),
-      Effect.provideService(CodexRunner, codexRunner),
-      Effect.provideService(RalphWorkspace, workspace),
-      Effect.provideService(HostTools, hostTools),
-      Effect.provideService(Stdio.Stdio, stdio),
-    );
+    effect.pipe(Effect.provide(runnerContext));
   const run = (onceInput: OnceFlagsInput) =>
     Effect.gen(function* () {
       const runner = yield* RalphRunner;

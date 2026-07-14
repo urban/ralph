@@ -1,8 +1,7 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
-import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Ref, Result, Sink, Stdio, Stream } from "effect";
+import { assert, layer } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Path, Ref, Result, Schema, Sink, Stdio, Stream } from "effect";
 import { Command } from "effect/unstable/cli";
-import { join } from "node:path";
 
 import {
   CodexExitError,
@@ -60,14 +59,18 @@ const makeHarness = Effect.fnUntraced(function* <E extends CodexInvocationError>
       ),
     stderr: () => Sink.drain,
   });
-  const orchestrationLayer = RalphRunner.layer.pipe(Layer.provideMerge(RalphWorkspace.layer));
+  const dependencies = Layer.mergeAll(
+    Layer.succeed(CodexRunner, codexRunner),
+    Layer.succeed(HostTools, hostTools),
+    Layer.succeed(Stdio.Stdio, stdio),
+  );
+  const orchestrationLayer = RalphRunner.layer.pipe(
+    Layer.provideMerge(RalphWorkspace.layer),
+    Layer.provideMerge(dependencies),
+  );
+  const orchestrationContext = yield* Layer.build(orchestrationLayer);
   const run = (args: ReadonlyArray<string>) =>
-    runLoop(args).pipe(
-      Effect.provide(orchestrationLayer),
-      Effect.provideService(CodexRunner, codexRunner),
-      Effect.provideService(HostTools, hostTools),
-      Effect.provideService(Stdio.Stdio, stdio),
-    );
+    runLoop(args).pipe(Effect.provide(orchestrationContext));
 
   return { invocations, notifications, output, run };
 });
@@ -85,30 +88,32 @@ const writePhaseFiles = Effect.fnUntraced(function* (
   },
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(directory, { recursive: true });
-  yield* fileSystem.writeFileString(join(directory, "BEFORE_WORK.md"), prompts.before);
-  yield* fileSystem.writeFileString(join(directory, "WORK.md"), prompts.work);
-  yield* fileSystem.writeFileString(join(directory, "AFTER_WORK.md"), prompts.after);
+  yield* fileSystem.writeFileString(path.join(directory, "BEFORE_WORK.md"), prompts.before);
+  yield* fileSystem.writeFileString(path.join(directory, "WORK.md"), prompts.work);
+  yield* fileSystem.writeFileString(path.join(directory, "AFTER_WORK.md"), prompts.after);
 });
 
 const assertNonzeroExit = <E>(result: Result.Result<void, E>): void => {
   assert.isTrue(Result.isFailure(result));
   if (Result.isFailure(result)) {
-    assert.isTrue(result.failure instanceof RalphExit);
-    if (result.failure instanceof RalphExit) {
+    assert.isTrue(Schema.is(RalphExit)(result.failure));
+    if (Schema.is(RalphExit)(result.failure)) {
       assert.strictEqual(result.failure.exitCode, 1);
     }
   }
 };
 
-describe("loop phase workflow", () => {
+layer(BunServices.layer)("loop phase workflow", (it) => {
   it.effect("advances checklist state across fresh phase snapshots until completion", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-loop-state-" });
-      const phaseDirectory = join(workspace, ".ralph");
-      const checklistPath = join(workspace, "CHECKLIST.md");
-      const progressPath = join(workspace, "PROGRESS.md");
+      const phaseDirectory = path.join(workspace, ".ralph");
+      const checklistPath = path.join(workspace, "CHECKLIST.md");
+      const progressPath = path.join(workspace, "PROGRESS.md");
       const stateObservedByAfter = yield* Ref.make<Array<string>>([]);
 
       yield* writePhaseFiles(phaseDirectory, {
@@ -130,12 +135,12 @@ describe("loop phase workflow", () => {
           switch (instructions) {
             case "Before v1.\n":
               yield* fileSystem.writeFileString(
-                join(phaseDirectory, "BEFORE_WORK.md"),
+                path.join(phaseDirectory, "BEFORE_WORK.md"),
                 "Before v2.\n",
               );
-              yield* fileSystem.writeFileString(join(phaseDirectory, "WORK.md"), "Work v2.\n");
+              yield* fileSystem.writeFileString(path.join(phaseDirectory, "WORK.md"), "Work v2.\n");
               yield* fileSystem.writeFileString(
-                join(phaseDirectory, "AFTER_WORK.md"),
+                path.join(phaseDirectory, "AFTER_WORK.md"),
                 "After v2.\n",
               );
               return invocationOutcome(false);
@@ -206,16 +211,17 @@ describe("loop phase workflow", () => {
         "=== Iteration 1 ===",
         "=== Iteration 2 ===",
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect("honors completion from every phase through the public command", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "ralph-loop-complete-",
       });
-      const phaseDirectory = join(workspace, ".ralph");
+      const phaseDirectory = path.join(workspace, ".ralph");
       yield* writePhaseFiles(phaseDirectory, {
         before: "Prepare.\n",
         work: "Work.\n",
@@ -265,16 +271,17 @@ describe("loop phase workflow", () => {
           }),
         { discard: true },
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect("uses default and explicit limits and reports typed nonzero exhaustion", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "ralph-loop-limits-",
       });
-      yield* fileSystem.writeFileString(join(workspace, "WORK.md"), "Keep working.\n");
+      yield* fileSystem.writeFileString(path.join(workspace, "WORK.md"), "Keep working.\n");
       const scenarios: ReadonlyArray<{
         readonly args: ReadonlyArray<string>;
         readonly expectedIterations: number;
@@ -307,14 +314,15 @@ describe("loop phase workflow", () => {
           }),
         { discard: true },
       );
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 
   it.effect("stops after a phase failure and notifies exactly once", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "ralph-loop-fail-" });
-      const phaseDirectory = join(workspace, ".ralph");
+      const phaseDirectory = path.join(workspace, ".ralph");
       yield* writePhaseFiles(phaseDirectory, {
         before: "Prepare.\n",
         work: "Work.\n",
@@ -343,6 +351,6 @@ describe("loop phase workflow", () => {
       assert.deepStrictEqual(yield* Ref.get(harness.notifications), [
         "Ralph loop failed: work failed",
       ]);
-    }).pipe(Effect.provide(BunServices.layer)),
+    }),
   );
 });

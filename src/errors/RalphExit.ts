@@ -2,7 +2,7 @@ import { Effect, Runtime, Schema } from "effect";
 
 export class RalphExit extends Schema.TaggedErrorClass<RalphExit>()("RalphExit", {
   message: Schema.String,
-  exitCode: Schema.Number,
+  exitCode: Schema.Finite,
 }) {
   override readonly [Runtime.errorReported] = false;
 

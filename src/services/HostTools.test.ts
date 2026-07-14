@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Option, Ref, Sink, Stream } from "effect";
+import { Context, Effect, Layer, Option, Ref, Sink, Stream } from "effect";
 import * as PlatformError from "effect/PlatformError";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
@@ -53,14 +53,15 @@ const makeSpawnFailureHarness = Effect.fnUntraced(function* () {
   return { capturedCommand, spawner };
 });
 
-const runNotify = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
-  Effect.gen(function* () {
-    const hostTools = yield* HostTools;
-    yield* hostTools.notifyIfAvailable("workflow complete");
-  }).pipe(
-    Effect.provide(HostTools.layer),
+const runNotify = Effect.fnUntraced(function* (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+) {
+  const context = yield* Layer.build(HostTools.layer).pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
+  const hostTools = Context.get(context, HostTools);
+  yield* hostTools.notifyIfAvailable("workflow complete");
+});
 
 describe("HostTools.notifyIfAvailable", () => {
   it.effect("spawns tt notify directly and ignores exit status", () =>

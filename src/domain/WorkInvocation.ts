@@ -155,7 +155,7 @@ export class CodexExitStatusError extends Schema.TaggedErrorClass<CodexExitStatu
 ) {}
 
 export class CodexExitError extends Schema.TaggedErrorClass<CodexExitError>()("CodexExitError", {
-  exitCode: Schema.Number,
+  exitCode: Schema.Finite,
   message: Schema.String,
 }) {}
 

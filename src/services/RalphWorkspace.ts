@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Context, DateTime, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import {
   type IterationSnapshot,
@@ -30,7 +30,9 @@ import { failWithMessage } from "../errors/RalphExit";
 
 const initFileNames = Object.values(phaseFileNames);
 
-const formatBackupTimestamp = () => new Date().toISOString().replace(/[-:.]/g, "");
+const formatBackupTimestamp = DateTime.now.pipe(
+  Effect.map((now) => DateTime.formatIso(now).replace(/[-:.]/g, "")),
+);
 
 interface PendingReadyPhaseSnapshot<Role extends PhaseRole = PhaseRole> {
   readonly _tag: "Ready";
@@ -52,7 +54,7 @@ export class RalphWorkspace extends Context.Service<
     ): Effect.Effect<IterationSnapshot, PhaseInputError>;
     cleanupIterationSnapshot(snapshot: IterationSnapshot): Effect.Effect<void>;
   }
->()("ralph-effect/services/RalphWorkspace") {
+>()("@urban/ralph/services/RalphWorkspace") {
   static readonly layer = Layer.effect(
     RalphWorkspace,
     Effect.gen(function* () {
@@ -140,7 +142,8 @@ export class RalphWorkspace extends Context.Service<
           return;
         }
 
-        const backupPath = `${targetFilePath}.bak.${formatBackupTimestamp()}`;
+        const timestamp = yield* formatBackupTimestamp;
+        const backupPath = `${targetFilePath}.bak.${timestamp}`;
         yield* fileSystem
           .copyFile(targetFilePath, backupPath)
           .pipe(Effect.catch(() => failWithMessage(`Could not create backup: ${backupPath}`)));
@@ -505,7 +508,7 @@ export class RalphWorkspace extends Context.Service<
       const cleanupIterationSnapshot = Effect.fnUntraced(function* (snapshot: IterationSnapshot) {
         yield* fileSystem
           .remove(snapshot.snapshotDirectory, { recursive: true })
-          .pipe(Effect.catch(() => Effect.void));
+          .pipe(Effect.ignore);
       });
 
       return RalphWorkspace.of({

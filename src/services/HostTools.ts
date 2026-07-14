@@ -7,7 +7,7 @@ export class HostTools extends Context.Service<
   {
     notifyIfAvailable(message: string): Effect.Effect<void>;
   }
->()("ralph-effect/services/HostTools") {
+>()("@urban/ralph/services/HostTools") {
   static readonly layer = Layer.effect(
     HostTools,
     Effect.gen(function* () {
@@ -24,10 +24,7 @@ export class HostTools extends Context.Service<
               stderr: "ignore",
             }),
           )
-          .pipe(
-            Effect.asVoid,
-            Effect.catch(() => Effect.void),
-          );
+          .pipe(Effect.asVoid, Effect.ignore);
       });
 
       return HostTools.of({
