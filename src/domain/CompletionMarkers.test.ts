@@ -4,6 +4,7 @@ import {
   initialMarkerScanState,
   invocationCompletionMarker,
   markerScanTailLimit,
+  resolveMarkerScanState,
   scanMarkerChunk,
   workflowCompletionMarker,
 } from "./CompletionMarkers";
@@ -17,19 +18,25 @@ const scanChunks = (chunks: ReadonlyArray<string>) =>
   );
 
 describe("completion marker scanning", () => {
-  it("detects both exact markers across every two-chunk split", () => {
-    const output = `prefix ${invocationCompletionMarker} middle ${workflowCompletionMarker} suffix`;
+  it("detects a trailing standalone marker block across every two-chunk split", () => {
+    const output = `native stdout\n${invocationCompletionMarker}\n${workflowCompletionMarker}\n`;
 
     for (let split = 0; split <= output.length; split += 1) {
-      const state = scanChunks([output.slice(0, split), output.slice(split)]);
-      assert.isTrue(state.invocationComplete, `invocation marker split at ${split}`);
-      assert.isTrue(state.workflowComplete, `workflow marker split at ${split}`);
+      const markers = resolveMarkerScanState(
+        scanChunks([output.slice(0, split), output.slice(split)]),
+      );
+      assert.isTrue(markers.invocationComplete, `invocation marker split at ${split}`);
+      assert.isTrue(markers.workflowComplete, `workflow marker split at ${split}`);
     }
   });
 
-  it("detects exact markers in either order", () => {
-    const invocationFirst = scanChunks([invocationCompletionMarker, workflowCompletionMarker]);
-    const workflowFirst = scanChunks([workflowCompletionMarker, invocationCompletionMarker]);
+  it("detects trailing standalone markers in either order", () => {
+    const invocationFirst = resolveMarkerScanState(
+      scanChunks([`${invocationCompletionMarker}\n${workflowCompletionMarker}\n`]),
+    );
+    const workflowFirst = resolveMarkerScanState(
+      scanChunks([`${workflowCompletionMarker}\n${invocationCompletionMarker}\n`]),
+    );
 
     assert.isTrue(invocationFirst.invocationComplete);
     assert.isTrue(invocationFirst.workflowComplete);
@@ -38,14 +45,50 @@ describe("completion marker scanning", () => {
   });
 
   it("rejects case and formatting variants", () => {
-    const state = scanChunks([
-      "<promise>invocation_complete</promise>",
-      "<promise> INVOCATION_COMPLETE </promise>",
-      "<PROMISE>COMPLETE</PROMISE>",
-    ]);
+    const markers = resolveMarkerScanState(
+      scanChunks([
+        "<promise>invocation_complete</promise>\n",
+        "<promise> INVOCATION_COMPLETE </promise>\n",
+        "<PROMISE>COMPLETE</PROMISE>\n",
+      ]),
+    );
 
-    assert.isFalse(state.invocationComplete);
-    assert.isFalse(state.workflowComplete);
+    assert.isFalse(markers.invocationComplete);
+    assert.isFalse(markers.workflowComplete);
+  });
+
+  it("rejects embedded marker text", () => {
+    const markers = resolveMarkerScanState(
+      scanChunks([
+        `prefix ${invocationCompletionMarker} suffix\n`,
+        `prefix ${workflowCompletionMarker} suffix\n`,
+      ]),
+    );
+
+    assert.isFalse(markers.invocationComplete);
+    assert.isFalse(markers.workflowComplete);
+  });
+
+  it("ignores marker lines when later stdout follows them", () => {
+    const markers = resolveMarkerScanState(
+      scanChunks([
+        `${invocationCompletionMarker}\n`,
+        `${workflowCompletionMarker}\n`,
+        "summary after markers\n",
+      ]),
+    );
+
+    assert.isFalse(markers.invocationComplete);
+    assert.isFalse(markers.workflowComplete);
+  });
+
+  it("accepts trailing blank lines after the final marker block", () => {
+    const markers = resolveMarkerScanState(
+      scanChunks(["prefix\n", `${workflowCompletionMarker}\n${invocationCompletionMarker}\n\n`]),
+    );
+
+    assert.isTrue(markers.invocationComplete);
+    assert.isTrue(markers.workflowComplete);
   });
 
   it("retains only the bounded marker recognition tail", () => {

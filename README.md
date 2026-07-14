@@ -120,11 +120,11 @@ Ralph recognizes two exact, case-sensitive stdout markers:
 <promise>COMPLETE</promise>
 ```
 
-Ralph automatically appends generic instructions requiring Codex to emit `INVOCATION_COMPLETE` only after the current phase succeeds. Users do not need to add that protocol to phase files. After a successful process exit, Ralph requires the exact marker; a zero exit without it is a phase failure.
+Ralph automatically appends generic instructions requiring Codex to emit `INVOCATION_COMPLETE` only after the current phase succeeds. Users do not need to add that protocol to phase files. After a successful process exit, Ralph requires the exact marker as a standalone final stdout line; a zero exit without it is a phase failure.
 
 `COMPLETE` means the entire workflow is complete. A user-authored phase that can make that decision must instruct Codex to emit the exact `<promise>COMPLETE</promise>` marker. Overall completion is accepted only when the invocation also emits `INVOCATION_COMPLETE`; marker order does not matter. Ralph then skips all remaining phases and loop iterations.
 
-Markers are recognized only from native stdout and evaluated after a successful exit. Spelling, casing, and formatting variants are not accepted, and markers may remain visible in terminal output.
+Markers are recognized only from native stdout and evaluated after a successful exit. Ralph scans only the trailing stdout footer, so markers count only when they appear as contiguous standalone final lines, aside from optional trailing blank lines. Spelling, casing, embedded-marker text, and output that continues after a marker line are not accepted, and markers may remain visible in terminal output.
 
 ## Timeouts
 

@@ -120,14 +120,12 @@ const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string =>
   chunks.map((chunk) => decoder.decode(chunk)).join("");
 
 describe("CodexRunner.runInvocation", () => {
-  it.effect("streams matching channels and returns exact markers after exit and drain", () =>
+  it.effect("streams matching channels and accepts only a trailing marker footer after exit", () =>
     Effect.gen(function* () {
-      const split = Math.floor(invocationCompletionMarker.length / 2);
+      const invocationFooter = `${invocationCompletionMarker}\n${workflowCompletionMarker}\n`;
+      const split = Math.floor(invocationFooter.length / 2);
       const harness = yield* makeHarness(
-        [
-          `native stdout ${invocationCompletionMarker.slice(0, split)}`,
-          `${invocationCompletionMarker.slice(split)} ${workflowCompletionMarker}`,
-        ],
+        ["native stdout\n", invocationFooter.slice(0, split), invocationFooter.slice(split)],
         ["native stderr"],
         0,
       );
@@ -146,7 +144,7 @@ describe("CodexRunner.runInvocation", () => {
       });
       assert.strictEqual(
         decodeChunks(yield* Ref.get(harness.stdoutOutput)),
-        `native stdout ${invocationCompletionMarker} ${workflowCompletionMarker}`,
+        `native stdout\n${invocationCompletionMarker}\n${workflowCompletionMarker}\n`,
       );
       assert.strictEqual(decodeChunks(yield* Ref.get(harness.stderrOutput)), "native stderr");
       assert.isTrue(yield* Ref.get(harness.streamsDrained));
@@ -203,10 +201,35 @@ describe("CodexRunner.runInvocation", () => {
     }),
   );
 
+  it.effect("rejects embedded or non-terminal marker text after a successful exit", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness(
+        [
+          `quoted ${invocationCompletionMarker}\n`,
+          `${invocationCompletionMarker}\n`,
+          "summary after marker\n",
+        ],
+        [],
+        0,
+      );
+      const error = yield* provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* Effect.flip(runner.runInvocation(request()));
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+
+      assert.strictEqual(error._tag, "MissingInvocationMarker");
+      assert.isTrue(yield* Ref.get(harness.scopeClosed));
+    }),
+  );
+
   it.effect("rejects nonzero exit even when both markers were streamed", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(
-        [`${invocationCompletionMarker}${workflowCompletionMarker}`],
+        [`${invocationCompletionMarker}\n${workflowCompletionMarker}\n`],
         [],
         17,
       );

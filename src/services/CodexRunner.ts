@@ -5,6 +5,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import {
   initialMarkerScanState,
   invocationCompletionMarker,
+  resolveMarkerScanState,
   scanMarkerChunk,
 } from "../domain/CompletionMarkers";
 import {
@@ -25,7 +26,7 @@ type InvocationDecision =
   | { readonly _tag: "Completed"; readonly outcome: InvocationOutcome }
   | { readonly _tag: "TimedOut"; readonly kind: "Idle" | "Absolute" };
 
-export const genericCompletionProtocol = `\n\nWhen you have successfully completed these instructions, emit exactly ${invocationCompletionMarker}. Do not emit this marker until the instructions are complete.`;
+export const genericCompletionProtocol = `\n\nWhen you have successfully completed these instructions, emit exactly ${invocationCompletionMarker} as a standalone final line. If you are also instructed to emit <promise>COMPLETE</promise>, emit the required marker lines together at the very end and emit nothing after them. Do not emit these markers until the instructions are complete.`;
 
 export const renderInvocationPrompt = (instructionsPath: string): string =>
   `Follow the instructions in this file:\n@${instructionsPath}${genericCompletionProtocol}`;
@@ -134,7 +135,7 @@ export class CodexRunner extends Context.Service<
             });
           }
 
-          const markers = yield* Ref.get(markerState);
+          const markers = resolveMarkerScanState(yield* Ref.get(markerState));
           if (!markers.invocationComplete) {
             return yield* new MissingInvocationMarker({
               message: `Codex exited successfully without ${invocationCompletionMarker}.`,
