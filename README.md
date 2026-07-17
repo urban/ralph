@@ -152,7 +152,7 @@ At the final outcome, Ralph attempts one best-effort `tt notify` notification fo
 
 ## Checklist workflow example
 
-[`examples/checklist-workflow/`](examples/checklist-workflow/) demonstrates a five-file workflow:
+[`examples/checklist-workflow.md`](examples/checklist-workflow.md) explains a five-file workflow from [`examples/checklist-workflow/`](examples/checklist-workflow/):
 
 - blank `BEFORE_WORK.md` shows an optional skipped phase;
 - `WORK.md` chooses and completes exactly one highest-priority item, updates state, and commits it;
@@ -168,6 +168,26 @@ cp examples/checklist-workflow/*.md ./project/
 ralph once -C ./project --ralph-dir .
 ralph loop -C ./project --ralph-dir .
 ```
+
+## Task Manager transaction workflow example
+
+[`examples/task-manager-workflow.md`](examples/task-manager-workflow.md) explains a serial, agent-only workflow backed by [Task Manager](https://github.com/urban/task-manager) and its `tm` CLI:
+
+- `BEFORE_WORK.md` plans the next transaction, claims its Work Item, creates a transaction branch, and maintains an ignored handoff;
+- `WORK.md` implements and verifies only the selected Work Item;
+- `AFTER_WORK.md` independently accepts the candidate or creates agent findings that block rejected work;
+- review findings remain on the transaction branch and take priority over unrelated backlog work;
+- an accepted transaction is committed and fast-forward merged into its recorded base branch before the next global Work Item is selected.
+
+Copy the workflow directory into a clean project with an initialized agent-only `tm` backlog, commit the setup, and run it with a stable actor:
+
+```bash
+cp -R examples/task-manager-workflow ./project/.ralph-tm
+TM_ACTOR=ralph-loop RALPH_TM_DIR=.ralph-tm \
+  ralph loop -C ./project --ralph-dir .ralph-tm --iterations 50
+```
+
+This example assumes Ralph is the sole code worker and sole task-store writer for the run. Read the complete instructions before using it.
 
 ## CLI reference
 

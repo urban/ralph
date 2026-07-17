@@ -40,5 +40,8 @@ test-results/
 # Sandbox state dir
 /.sandbox/
 
+# Ralph iteration prompt snapshots
+/.ralph-snapshot-*/
+
 # Repos for AI reference
 /.repos/
