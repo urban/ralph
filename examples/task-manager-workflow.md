@@ -21,6 +21,7 @@ This example deliberately targets a constrained unattended workflow:
 - Every Work Item uses the `agent` executor.
 - No person or other process changes the base branch while a transaction is active.
 - The task store is the repository-local `.tasks` directory and is committed with the code it describes.
+
 - The repository's normal verification commands can run non-interactively.
 
 Do not use this example unchanged when people or other agents may concurrently modify the repository, branches, or task store.
@@ -121,14 +122,13 @@ If commit or merge fails, the ignored handoff remains with a recovery state. A l
 
 ## Completion and stalled backlogs
 
-The Planner emits Ralph's overall completion marker only when all of these are true:
+The Planner treats invocation completion, a stalled backlog, and whole-backlog completion as distinct outcomes:
 
-- no transaction handoff exists;
-- the base branch is clean;
-- `tm validate` succeeds;
-- no open Work Item remains across all executors.
+- **Planner invocation completion** means only that the current Planner phase succeeded. Selecting a Work Item, resuming any active handoff, passing `tm validate`, or otherwise reaching a clean phase exit leaves `overall_completion_authorized` false. Ordinary Planner success emits only the invocation-completion marker required by Ralph's appended protocol so the Worker and Reviewer can continue.
+- **Stalled or no-actionable work** means open Work Items still exist but `tm next --json` returns `no-actionable-work`. This can result from an unexpected claim, an incomplete dependency, or inconsistent task state. It is never completion: the Planner reports the stalled open backlog, does not use `--force`, and does not emit the overall completion marker.
+- **Verified whole-backlog completion** is the only outcome that sets `overall_completion_authorized` to true. It requires the no-handoff transaction-start path, successful runtime, repository, and task-store prerequisite checks, and a fresh `tm list --status open --all-executors --json` result whose recursive count of `.tickets` nodes with `.matchesFilter` equal to `true` is exactly zero.
 
-If open Work Items remain but none is actionable, the workflow is stalled rather than complete. Likely causes include an unexpected claim, an incomplete dependency, or invalid task-store state. The Planner reports the condition and stops without using `--force`.
+A `selected`, `ready-for-review`, `planning`, `remediation`, or `accepted-awaiting-commit` handoff always leaves authorization false. Successful transaction integration alone is also insufficient: an `accepted-awaiting-merge` handoff can lead to completion only after the merge and cleanup succeed, the handoff is removed, and a fresh no-handoff recursive open-count check proves zero. Only then does the Planner emit the contiguous overall- and invocation-completion footer that terminates Ralph's entire loop.
 
 ## Recovery
 

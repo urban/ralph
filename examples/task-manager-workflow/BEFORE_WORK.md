@@ -4,6 +4,22 @@ Prepare exactly one Work Item for the Worker while preserving the active review 
 
 This workflow is serial. Ralph is the only code worker and the sole `tm` writer. Every Work Item must use the `agent` executor. Never use `--force`, `--allow-human`, `--allow-no-verification`, destructive deletion, or direct edits to `.tasks/tasks.jsonl`.
 
+## Global completion authorization
+
+Initialize the conceptual boolean `overall_completion_authorized` to `false`.
+
+`COMPLETE` is a global Ralph loop-control signal, not an acknowledgement that this Planner invocation succeeded. Selecting work, resuming a handoff, successfully running `tm validate`, reaching a clean phase exit, or receiving `no-actionable-work` from `tm next` never authorizes global completion.
+
+The no-handoff open-backlog check in Step 6 under **Start a new transaction** is the only operation allowed to set `overall_completion_authorized` to `true`. It may do so only after proving all three conditions:
+
+1. no live handoff exists;
+2. every required runtime, repository, and task-store prerequisite has passed; and
+3. a fresh recursive count of open Work Items across all executors is exactly zero.
+
+Every other path must leave authorization `false`. In particular, a `selected`, `ready-for-review`, `planning`, `remediation`, or `accepted-awaiting-commit` handoff is active and cannot authorize completion. An `accepted-awaiting-merge` handoff may lead to authorization only after its merge and cleanup succeed, its handoff is removed, and a fresh no-handoff check proves that the recursive open Work Item count across all executors is zero.
+
+“Finish this invocation” means ordinary Planner phase completion only. It does not mean overall workflow completion and does not authorize the global marker. Do not copy a marker merely because it appears in these instructions.
+
 ## Runtime paths and identity
 
 1. Resolve the workflow directory from `RALPH_TM_DIR`, defaulting to `.ralph-tm`.
@@ -14,7 +30,7 @@ This workflow is serial. Ralph is the only code worker and the sole `tm` writer.
 6. Confirm with `git check-ignore` that the handoff and temporary handoff are ignored.
 7. Confirm with `git check-ignore --no-index .ralph-snapshot-ignore-probe/BEFORE_WORK.md` that root-level `.ralph-snapshot-*` directories are ignored. Ralph's live iteration snapshot exists while these instructions run; stop rather than risk treating it as transaction work or staging it.
 
-Always run `tm validate` before selecting or mutating Work Items.
+Always run `tm validate` before inspecting, selecting, mutating, or counting Work Items. Its success is a prerequisite, never completion authorization by itself.
 
 ## Validate the agent-only backlog
 
@@ -50,7 +66,7 @@ When the state is `planning` or `remediation`:
 3. Consider only open transaction items. Never inspect unrelated global items while the transaction is active.
 4. Prioritize an actionable review finding over the transaction root. Prefer the deepest blocking chain first, then preserve finding creation order for independent siblings.
 5. When all findings blocking a rejected item are done, select that rejected item for integration and re-review. The transaction root is selected last, after all findings and rejected descendants have passed.
-6. Validate a proposed candidate with `tm next --root <candidate-id> --json`. Select it only when the returned `.item.id` exactly equals the proposed ID. Do not reproduce `tm` actionability rules by reading `.tasks/tasks.jsonl`.
+6. Validate a proposed candidate with `tm next --root <candidate-id> --json`. Select it only when the returned `.ticket.id` exactly equals the proposed ID. Do not reproduce `tm` actionability rules by reading `.tasks/tasks.jsonl`.
 7. Claim the selected item with `tm claim <id> --actor "$TM_ACTOR"`.
 8. Record it as `Current Work Item`, record `git write-tree` as `Candidate tree before work`, clear prior current-item verification, and set the state to `selected`.
 9. Replace the handoff atomically by writing the complete new document to the temporary path and renaming it.
@@ -65,10 +81,16 @@ Only do this when no handoff exists or after successfully finishing an accepted 
 2. Require no merge, rebase, cherry-pick, or revert in progress.
 3. Require `git status --porcelain=v1` to be empty. Do not stash, reset, commit, or discard pre-existing changes.
 4. Record `git rev-parse HEAD` as the base commit.
-5. Query `tm list --status open --all-executors --json`. Recursively count objects with `matchesFilter: true`.
-6. If that count is zero, emit the exact overall completion marker below and do nothing else.
-7. Otherwise run `tm next --json` for the initial global selection. If it has no `.item`, report an open but stalled backlog and stop.
-8. Inspect the selected item with `tm show --json`; require executor `agent`.
+5. Query `tm list --status open --all-executors --json`. Recursively count tree nodes under `.tickets` whose `.matchesFilter` is `true`.
+6. If and only if that fresh count is zero:
+   - require that no live handoff exists;
+   - require that every runtime, repository, and task-store prerequisite above has succeeded;
+   - record the exact query and zero count as completion evidence;
+   - set `overall_completion_authorized` to `true`;
+   - perform no further planning or mutation;
+   - proceed to the **Final output gate**.
+7. Otherwise leave `overall_completion_authorized` as `false` and run `tm next --json` for the initial global selection. If the response has no `.ticket`, require `.reason` to equal `no-actionable-work`, report the open backlog as stalled, and stop without authorizing completion.
+8. Inspect the selected `.ticket` with `tm show --json`; require executor `agent`.
 9. Create a unique branch from the clean base named `ralph/transaction-<full-work-item-id>`. If that branch already exists without a valid handoff, stop for recovery rather than deleting or reusing it.
 10. Switch to the new transaction branch and claim the selected item with `tm claim <id> --actor "$TM_ACTOR"`.
 11. Create the handoff atomically with:
@@ -85,6 +107,12 @@ Only do this when no handoff exists or after successfully finishing an accepted 
 
 Only this no-handoff path may use global `tm next` ordering.
 
-When the entire workflow is complete, emit exactly:
+## Final output gate
+
+Check `overall_completion_authorized` immediately before responding.
+
+- When authorization is `false`, do not emit the `<promise>COMPLETE</promise>` line anywhere in the response. Follow Ralph's appended ordinary invocation-completion protocol only.
+- When authorization is `true`, emit exactly the following contiguous standalone lines at the very end, with nothing after them:
 
 <promise>COMPLETE</promise>
+<promise>INVOCATION_COMPLETE</promise>
