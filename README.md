@@ -173,17 +173,20 @@ ralph loop -C ./project --ralph-dir .
 
 [`examples/task-manager-workflow.md`](examples/task-manager-workflow.md) explains a serial, agent-only workflow backed by [Task Manager](https://github.com/urban/task-manager) and its `tm` CLI:
 
-- `BEFORE_WORK.md` plans the next transaction, claims its Work Item, creates a transaction branch, and maintains an ignored handoff;
+- `BEFORE_WORK.md` scopes the run to `RALPH_TM_ROOT`, plans or resumes one transaction, claims its Work Item, creates a transaction branch, and maintains an ignored handoff;
 - `WORK.md` implements and verifies only the selected Work Item;
-- `AFTER_WORK.md` independently accepts the candidate or creates agent findings that block rejected work;
-- review findings remain on the transaction branch and take priority over unrelated backlog work;
-- an accepted transaction is committed and fast-forward merged into its recorded base branch before the next global Work Item is selected.
+- `AFTER_WORK.md` verifies the candidate against a finite contract, returns consolidated blocker feedback to the Worker under the same Work Item, and integrates accepted work;
+- no phase creates Work Items or dependencies, so the configured backlog subtree burns down monotonically;
+- an accepted transaction is committed and fast-forward merged into its recorded base branch before the next target-root Work Item is selected.
 
-Copy the workflow directory into a clean project with an initialized agent-only `tm` backlog, commit the setup, and run it with a stable actor:
+Copy the workflow instructions into a clean project with an initialized `tm` backlog whose configured target subtree is agent-only, commit the setup, and run it with a stable actor and target root. Do not replace an installed copy while it has a live handoff; finish or recover that transaction with its original instructions first.
 
 ```bash
-cp -R examples/task-manager-workflow ./project/.ralph-tm
-TM_ACTOR=ralph-loop RALPH_TM_DIR=.ralph-tm \
+mkdir -p ./project/.ralph-tm
+cp examples/task-manager-workflow/*.md ./project/.ralph-tm/
+TM_ACTOR=ralph-loop \
+RALPH_TM_DIR=.ralph-tm \
+RALPH_TM_ROOT=<full-root-work-item-id> \
   ralph loop -C ./project --ralph-dir .ralph-tm --iterations 50
 ```
 

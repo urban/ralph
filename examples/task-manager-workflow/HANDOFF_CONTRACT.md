@@ -9,9 +9,10 @@ Every phase must read this contract before reading or writing the live handoff. 
 ```markdown
 # Ralph transaction handoff
 
-- Version: `1`
+- Version: `2`
 - State: `selected`
 - Actor: `ralph-loop`
+- Backlog root: `<full target Work Item ID>`
 - Base branch: `main`
 - Base commit: `<full Git commit ID>`
 - Transaction branch: `ralph/transaction-<full-work-item-id>`
@@ -40,14 +41,14 @@ Pending.
 - Pending.
 ```
 
-The initial handoff has only the Root entry under `Transaction items`. Append each finding once, in creation order, with the exact rejected item it blocks. Do not record Work Item lifecycle status in this file; query `tm` whenever status matters.
+The `Backlog root` is the canonical full ID resolved from `RALPH_TM_ROOT`; every phase must require the environment target to resolve to the same ID. A new handoff has only the Root entry under `Transaction items`. Historical handoffs may already contain Findings in creation order with the exact rejected item each blocks; preserve that fixed list and do not append to it. Do not record Work Item lifecycle status in this file; query `tm` whenever status matters.
 
 ## States
 
-- `selected`: `Current Work Item` is open and claimed by Actor. The Worker may implement or resume it. The before-work tree is populated and the after-work tree is `pending`.
+- `selected`: `Current Work Item` is open and claimed by Actor. The Worker may implement or resume it. The before-work tree is populated and the after-work tree is `pending`. On a same-item review retry, `Worker summary` contains the Reviewer's consolidated repair checklist and `Worker verification` contains its evidence; the Worker addresses every checklist item and replaces both with an implementation summary that identifies each item and its disposition plus the next verification evidence.
 - `ready-for-review`: `Current Work Item` remains open and claimed by Actor. Both attempt tree fields and concrete Worker verification are populated.
 - `planning`: no current item is selected after an accepted finding. The Planner must choose the next transaction item.
-- `remediation`: no current item is selected after review created findings. The Planner must choose a finding before unrelated work.
+- `remediation`: legacy state with no current item selected after historical review findings were created. The Planner must choose an existing finding before unrelated work and must not create another.
 - `accepted-awaiting-commit`: the transaction root is done in `tm`, the accepted candidate is staged on the transaction branch, and the accepted Git commit has not been created.
 - `accepted-awaiting-merge`: the accepted commit exists on the clean transaction branch and has not been fully merged and cleaned up on the base branch.
 
@@ -57,11 +58,15 @@ Use `none`, not an omitted field, when there is no Current Work Item. Use `pendi
 
 `git write-tree` identifies the current staged candidate without creating a commit.
 
-- `Cumulative candidate tree` is the most recently staged transaction tree after completed work and task-store mutations.
+- `Cumulative candidate tree` is the staged transaction tree inherited by the next attempt. After a blocked review, it identifies the unchanged submitted candidate that the Worker must repair; after accepted work, it also includes the corresponding task-store mutations.
 - `Candidate tree before work` identifies the staged tree inherited by the current attempt.
 - `Candidate tree after work` identifies the exact tree submitted for independent review.
 
 The handoff itself and its temporary file must be ignored, so changing them must not affect these tree IDs.
+
+## Burn-down mode
+
+The transaction-item relationship list is fixed for the remainder of the current backlog run. Preserve every existing Root and Finding entry exactly, but do not append findings. Review defects are repaired by the Worker under the current Work Item. The Reviewer always reuses the existing Worker summary and verification sections for consolidated feedback and returns a blocked candidate to `selected`; it does not repair the candidate or create another Ticket.
 
 ## Atomic replacement
 
