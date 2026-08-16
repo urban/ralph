@@ -205,8 +205,6 @@ describe("CodexRunner.runInvocation", () => {
       assert.deepStrictEqual(command.value.args, [
         "exec",
         "--approve-for-me",
-        "--sandbox",
-        "workspace-write",
         "-C",
         "/workspace",
         renderInvocationPrompt("/workspace/.ralph-snapshot-test/WORK.md"),

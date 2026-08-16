@@ -231,7 +231,7 @@ ralph loop --help
 By default Ralph invokes:
 
 ```bash
-codex exec --approve-for-me --sandbox workspace-write
+codex exec --approve-for-me
 ```
 
 `--yolo` instead uses:

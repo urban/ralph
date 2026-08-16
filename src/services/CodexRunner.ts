@@ -45,8 +45,6 @@ const makeWorkInvocationCommand = (request: InvocationRequest) =>
       : [
           "exec",
           "--approve-for-me",
-          "--sandbox",
-          "workspace-write",
           "-C",
           request.workingDirectory,
           renderInvocationPrompt(request.instructionsPath),
