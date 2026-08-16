@@ -181,6 +181,39 @@ describe("CodexRunner.runInvocation", () => {
     }),
   );
 
+  it.effect("uses automatic approval review in the workspace-write sandbox", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([`${invocationCompletionMarker}\n`], [], 0);
+      yield* provideHarness(
+        Effect.gen(function* () {
+          const runner = yield* CodexRunner;
+          return yield* runner.runInvocation(request());
+        }),
+        harness.spawner,
+        harness.stdio,
+      );
+
+      const command = yield* Ref.get(harness.capturedCommand);
+      assert.isTrue(Option.isSome(command));
+      if (Option.isNone(command)) {
+        return;
+      }
+      assert.strictEqual(command.value._tag, "StandardCommand");
+      if (command.value._tag !== "StandardCommand") {
+        return;
+      }
+      assert.deepStrictEqual(command.value.args, [
+        "exec",
+        "--approve-for-me",
+        "--sandbox",
+        "workspace-write",
+        "-C",
+        "/workspace",
+        renderInvocationPrompt("/workspace/.ralph-snapshot-test/WORK.md"),
+      ]);
+    }),
+  );
+
   it.effect("rejects complete-only and marker variants", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness(

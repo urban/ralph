@@ -7,7 +7,7 @@ Ralph is a small Bun CLI that runs `codex exec` through independently authored b
 Prerequisites:
 
 - Bun
-- Codex CLI
+- Codex CLI 0.147.0 or newer
 
 From this checkout:
 
@@ -231,7 +231,7 @@ ralph loop --help
 By default Ralph invokes:
 
 ```bash
-codex exec --full-auto --sandbox workspace-write
+codex exec --approve-for-me --sandbox workspace-write
 ```
 
 `--yolo` instead uses:

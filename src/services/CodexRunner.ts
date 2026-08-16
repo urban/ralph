@@ -44,7 +44,7 @@ const makeWorkInvocationCommand = (request: InvocationRequest) =>
         ]
       : [
           "exec",
-          "--full-auto",
+          "--approve-for-me",
           "--sandbox",
           "workspace-write",
           "-C",
